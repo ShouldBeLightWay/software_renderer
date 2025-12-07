@@ -20,3 +20,12 @@ add_executable(software_renderer src/main.cpp)
 
 # Link libraries
 target_link_libraries(software_renderer PRIVATE SDL3::SDL3 glm::glm)
+
+	# On Windows, ensure SDL3 runtime DLL is copied next to the executable
+	if (WIN32)
+		add_custom_command(TARGET software_renderer POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy_if_different
+				$<TARGET_FILE:SDL3::SDL3>
+				$<TARGET_FILE_DIR:software_renderer>
+		)
+	endif()
