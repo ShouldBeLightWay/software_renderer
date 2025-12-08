@@ -1,7 +1,33 @@
 #include <assert.h>
+#include <iostream>
 
 #include "swrDevice.h"
 #include <SDL3/SDL.h>
+
+namespace
+{
+    struct TextureLock
+    {
+        SDL_Texture *tex{ nullptr };
+        void *pixels{ nullptr };
+        int pitch{ 0 };
+        bool ok{ false };
+
+        explicit TextureLock( SDL_Texture *t, const SDL_Rect *rect = nullptr ) : tex( t )
+        {
+            ok = SDL_LockTexture( tex, rect, &pixels, &pitch );
+        }
+
+        ~TextureLock()
+        {
+            if( ok )
+                SDL_UnlockTexture( tex );
+        }
+
+        TextureLock( const TextureLock & ) = delete;
+        TextureLock &operator=( const TextureLock & ) = delete;
+    };
+} // unnamed namespace
 
 namespace swr
 {
@@ -45,6 +71,10 @@ namespace swr
 
         SDL_RenderPresent
         */
+        assert( renderer != nullptr );
+        assert( texture != nullptr );
+        assert( frameWidth * frameHeight == frameBuffers.colorBuffer.size() );
+
         const SDL_PixelFormatDetails *pf = SDL_GetPixelFormatDetails( SDL_PIXELFORMAT_RGBA8888 );
         auto vec4ColorToRGBA8 = [pf]( const glm::vec4 &color ) -> std::uint32_t {
             std::uint32_t r = static_cast<std::uint32_t>( glm::clamp( color.r, 0.0f, 1.0f ) * 255.0f );
@@ -58,16 +88,28 @@ namespace swr
 
         size_t width = frameWidth;
         size_t height = frameHeight;
-        // Готовим временный буфер RGBA8 и обновляем текстуру без LockTexture
-        std::vector<std::uint32_t> staging;
-        staging.resize( width * height );
-
-        for( size_t i = 0; i < width * height; ++i )
+        // Обновление текстуры через Lock/Unlock без доп. аллокаций
+        TextureLock lock( texture );
+        if( !lock.ok )
         {
-            staging[i] = vec4ColorToRGBA8( frameBuffers.colorBuffer[i] );
+            std::cerr << "SDL_LockTexture failed: " << SDL_GetError() << std::endl;
+            return;
         }
+        assert( lock.pixels != nullptr );
+        assert( lock.pitch >= static_cast<int>( width ) * 4 );
 
-        SDL_UpdateTexture( texture, nullptr, staging.data(), static_cast<int>( width * sizeof( std::uint32_t ) ) );
+        // Пишем построчно с учётом pitch
+        auto *row = static_cast<std::uint8_t *>( lock.pixels );
+        for( size_t y = 0; y < height; ++y )
+        {
+            auto *dst32 = reinterpret_cast<std::uint32_t *>( row );
+            const size_t base = y * width;
+            for( size_t x = 0; x < width; ++x )
+            {
+                dst32[x] = vec4ColorToRGBA8( frameBuffers.colorBuffer[base + x] );
+            }
+            row += lock.pitch;
+        }
 
         // Сброс вьюпорта/масштаба и явное очищение фона в чёрный
         SDL_SetRenderViewport( renderer, nullptr );
