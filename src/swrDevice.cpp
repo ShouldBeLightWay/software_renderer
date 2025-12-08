@@ -4,7 +4,7 @@
 namespace swr
 {
 
-    std::shared_ptr<Device> Device::сreate( size_t width, size_t height )
+    std::shared_ptr<Device> Device::create( size_t width, size_t height )
     {
         // Создаём shared_ptr<Device>, затем инициализируем стадии
         auto dev = std::shared_ptr<Device>( new Device( width, height ) );

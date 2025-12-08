@@ -73,7 +73,7 @@ namespace swr
     {
       public:
         // Создание устройства только через фабрику
-        static std::shared_ptr<Device> сreate( size_t width, size_t height );
+        static std::shared_ptr<Device> create( size_t width, size_t height );
 
         ~Device();
         Device( const Device & ) = delete;
