@@ -75,15 +75,15 @@ namespace swr
         assert( texture != nullptr );
         assert( frameWidth * frameHeight == frameBuffers.colorBuffer.size() );
 
-        const SDL_PixelFormatDetails *pf = SDL_GetPixelFormatDetails( SDL_PIXELFORMAT_RGBA8888 );
-        auto vec4ColorToRGBA8 = [pf]( const glm::vec4 &color ) -> std::uint32_t {
+        static const SDL_PixelFormatDetails *pf = SDL_GetPixelFormatDetails( SDL_PIXELFORMAT_RGBA8888 );
+        auto vec4ColorToRGBA8 = []( const glm::vec4 &color, const SDL_PixelFormatDetails *pfmt ) -> std::uint32_t {
             std::uint32_t r = static_cast<std::uint32_t>( glm::clamp( color.r, 0.0f, 1.0f ) * 255.0f );
             std::uint32_t g = static_cast<std::uint32_t>( glm::clamp( color.g, 0.0f, 1.0f ) * 255.0f );
             std::uint32_t b = static_cast<std::uint32_t>( glm::clamp( color.b, 0.0f, 1.0f ) * 255.0f );
             std::uint32_t a = static_cast<std::uint32_t>( glm::clamp( color.a, 0.0f, 1.0f ) * 255.0f );
             // Pack using masks/shifts from pixel format details
-            return ( ( r << pf->Rshift ) & pf->Rmask ) | ( ( g << pf->Gshift ) & pf->Gmask ) |
-                   ( ( b << pf->Bshift ) & pf->Bmask ) | ( ( a << pf->Ashift ) & pf->Amask );
+            return ( ( r << pfmt->Rshift ) & pfmt->Rmask ) | ( ( g << pfmt->Gshift ) & pfmt->Gmask ) |
+                   ( ( b << pfmt->Bshift ) & pfmt->Bmask ) | ( ( a << pfmt->Ashift ) & pfmt->Amask );
         };
 
         size_t width = frameWidth;
@@ -107,7 +107,7 @@ namespace swr
                 const size_t base = y * width;
                 for( size_t x = 0; x < width; ++x )
                 {
-                    dst32[x] = vec4ColorToRGBA8( frameBuffers.colorBuffer[base + x] );
+                    dst32[x] = vec4ColorToRGBA8( frameBuffers.colorBuffer[base + x], pf );
                 }
                 row += lock.pitch;
             }
