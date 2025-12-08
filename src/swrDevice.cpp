@@ -1,3 +1,5 @@
+#include <assert.h>
+
 #include "swrDevice.h"
 #include <SDL3/SDL.h>
 
@@ -28,15 +30,67 @@ namespace swr
     }
 
     // Заглушки стадий (интерфейсные методы) — реализации по мере развития
-    void Device::present( SDL_Renderer * /*renderer*/, SDL_Texture * /*texture*/ )
+    void Device::present( SDL_Renderer *renderer, SDL_Texture *texture )
     {
+        /*
+        Нужно:
+
+        SDL_LockTexture
+
+        Скопировать glm::vec4 → RGBA8
+
+        SDL_UnlockTexture
+
+        SDL_RenderTexture
+
+        SDL_RenderPresent
+        */
+        const SDL_PixelFormatDetails *pf = SDL_GetPixelFormatDetails( SDL_PIXELFORMAT_RGBA8888 );
+        auto vec4ColorToRGBA8 = [pf]( const glm::vec4 &color ) -> std::uint32_t {
+            std::uint32_t r = static_cast<std::uint32_t>( glm::clamp( color.r, 0.0f, 1.0f ) * 255.0f );
+            std::uint32_t g = static_cast<std::uint32_t>( glm::clamp( color.g, 0.0f, 1.0f ) * 255.0f );
+            std::uint32_t b = static_cast<std::uint32_t>( glm::clamp( color.b, 0.0f, 1.0f ) * 255.0f );
+            std::uint32_t a = static_cast<std::uint32_t>( glm::clamp( color.a, 0.0f, 1.0f ) * 255.0f );
+            // Pack using masks/shifts from pixel format details
+            return ( ( r << pf->Rshift ) & pf->Rmask ) | ( ( g << pf->Gshift ) & pf->Gmask ) |
+                   ( ( b << pf->Bshift ) & pf->Bmask ) | ( ( a << pf->Ashift ) & pf->Amask );
+        };
+
+        size_t width = frameWidth;
+        size_t height = frameHeight;
+        // Готовим временный буфер RGBA8 и обновляем текстуру без LockTexture
+        std::vector<std::uint32_t> staging;
+        staging.resize( width * height );
+
+        for( size_t i = 0; i < width * height; ++i )
+        {
+            staging[i] = vec4ColorToRGBA8( frameBuffers.colorBuffer[i] );
+        }
+
+        SDL_UpdateTexture( texture, nullptr, staging.data(), static_cast<int>( width * sizeof( std::uint32_t ) ) );
+
+        // Сброс вьюпорта/масштаба и явное очищение фона в чёрный
+        SDL_SetRenderViewport( renderer, nullptr );
+        SDL_SetRenderScale( renderer, 1.0f, 1.0f );
+        SDL_SetRenderDrawColor( renderer, 0, 0, 0, 255 );
+        SDL_RenderClear( renderer );
+        SDL_FRect dst{ 0.0f, 0.0f, static_cast<float>( width ), static_cast<float>( height ) };
+        SDL_RenderTexture( renderer, texture, nullptr, &dst );
+        SDL_RenderPresent( renderer );
     }
+
     void Device::clear()
     {
+        auto clearColor = omStage.clearColor();
+        auto clearDepth = omStage.depthClearValue();
+        std::fill( frameBuffers.colorBuffer.begin(), frameBuffers.colorBuffer.end(), clearColor );
+        std::fill( frameBuffers.depthBuffer.begin(), frameBuffers.depthBuffer.end(), clearDepth );
     }
+
     void Device::draw( size_t /*vertexCount*/, size_t /*startVertexLocation*/ )
     {
     }
+
     void Device::drawIndexed( size_t /*indexCount*/, size_t /*startIndexLocation*/, size_t /*baseVertexLocation*/ )
     {
     }
@@ -86,9 +140,20 @@ namespace swr
     {
         clearColorValue = color;
     }
+
     glm::vec4 Device::OMStage::clearColor() const
     {
         return clearColorValue;
+    }
+
+    void Device::OMStage::setDepthClearValue( float depth )
+    {
+        depthClear = depth;
+    }
+
+    float Device::OMStage::depthClearValue() const
+    {
+        return depthClear;
     }
 
 } // namespace swr

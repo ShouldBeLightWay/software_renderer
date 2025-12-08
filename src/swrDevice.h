@@ -154,6 +154,8 @@ namespace swr
           public:
             void setClearColor( const glm::vec4 &color );
             glm::vec4 clearColor() const;
+            void setDepthClearValue( float depth );
+            float depthClearValue() const;
             // В будущем можно добавить настройки слияния вывода
           private:
             friend class Device;
@@ -162,6 +164,7 @@ namespace swr
             }
             std::weak_ptr<Device> parentDevice;
             glm::vec4 clearColorValue;
+            float depthClear = 1.0f;
         };
 
         // Доступ к стадиям конвейера
