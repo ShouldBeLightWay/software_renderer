@@ -1,6 +1,7 @@
 # Format Style Options - Created with Clang Power Tools
 ---
 BasedOnStyle: Microsoft
+NamespaceIndentation: All
 SpaceAfterTemplateKeyword: false
 SpaceBeforeParens: Never
 SpaceInEmptyBlock: false
