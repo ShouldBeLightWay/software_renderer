@@ -1,0 +1,38 @@
+# Format Style Options - Created with Clang Power Tools
+---
+BasedOnStyle: Microsoft
+NamespaceIndentation: All
+SpaceAfterTemplateKeyword: false
+SpaceBeforeParens: Never
+SpaceInEmptyBlock: false
+SpacesInParentheses: true
+IndentPPDirectives: None
+...
+#---
+#BasedOnStyle: Mozilla
+#AlignAfterOpenBracket: AlwaysBreak
+#AlignConsecutiveDeclarations: Consecutive
+#AllowAllArgumentsOnNextLine: false
+#AllowAllParametersOfDeclarationOnNextLine: true
+#AllowShortCaseLabelsOnASingleLine: true
+#AllowShortFunctionsOnASingleLine: None
+#AllowShortIfStatementsOnASingleLine: WithoutElse
+#AllowShortLoopsOnASingleLine: true
+#AlwaysBreakAfterReturnType: All
+#BreakBeforeBinaryOperators: All
+#BreakBeforeBraces: Allman
+#BreakConstructorInitializers: AfterColon
+#ColumnLimit: 130
+#EmptyLineBeforeAccessModifier: Never
+#IndentCaseLabels: false
+#MaxEmptyLinesToKeep: 2
+#ReflowComments: false
+#SortIncludes: false
+#SpaceAfterTemplateKeyword: true
+#SpaceBeforeCtorInitializerColon: false
+#SpaceBeforeInheritanceColon: false
+#SpaceBeforeParens: Never
+#SpacesInConditionalStatement: true
+#SpacesInParentheses: true
+#UseTab: ForIndentation
+#...
