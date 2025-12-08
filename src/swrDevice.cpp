@@ -89,26 +89,29 @@ namespace swr
         size_t width = frameWidth;
         size_t height = frameHeight;
         // Обновление текстуры через Lock/Unlock без доп. аллокаций
-        TextureLock lock( texture );
-        if( !lock.ok )
         {
-            std::cerr << "SDL_LockTexture failed: " << SDL_GetError() << std::endl;
-            return;
-        }
-        assert( lock.pixels != nullptr );
-        assert( lock.pitch >= static_cast<int>( width ) * 4 );
-
-        // Пишем построчно с учётом pitch
-        auto *row = static_cast<std::uint8_t *>( lock.pixels );
-        for( size_t y = 0; y < height; ++y )
-        {
-            auto *dst32 = reinterpret_cast<std::uint32_t *>( row );
-            const size_t base = y * width;
-            for( size_t x = 0; x < width; ++x )
+            TextureLock lock( texture );
+            if( !lock.ok )
             {
-                dst32[x] = vec4ColorToRGBA8( frameBuffers.colorBuffer[base + x] );
+                std::cerr << "SDL_LockTexture failed: " << SDL_GetError() << std::endl;
+                return;
             }
-            row += lock.pitch;
+            assert( lock.pixels != nullptr );
+            assert( lock.pitch >= static_cast<int>( width ) * 4 );
+
+            // Пишем построчно с учётом pitch
+            auto *row = static_cast<std::uint8_t *>( lock.pixels );
+            for( size_t y = 0; y < height; ++y )
+            {
+                auto *dst32 = reinterpret_cast<std::uint32_t *>( row );
+                const size_t base = y * width;
+                for( size_t x = 0; x < width; ++x )
+                {
+                    dst32[x] = vec4ColorToRGBA8( frameBuffers.colorBuffer[base + x] );
+                }
+                row += lock.pitch;
+            }
+            // lock выходит из области видимости здесь и вызывает SDL_UnlockTexture
         }
 
         // Сброс вьюпорта/масштаба и явное очищение фона в чёрный
