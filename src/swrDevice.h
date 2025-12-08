@@ -72,17 +72,8 @@ namespace swr
     class Device : public std::enable_shared_from_this<Device>
     {
       public:
-        Device( size_t width, size_t height )
-            : iaStage( std::shared_ptr<Device>( this, []( Device * ) {} ) ),
-              vsStage( std::shared_ptr<Device>( this, []( Device * ) {} ) ),
-              rsStage( std::shared_ptr<Device>( this, []( Device * ) {} ) ),
-              psStage( std::shared_ptr<Device>( this, []( Device * ) {} ) ),
-              omStage( std::shared_ptr<Device>( this, []( Device * ) {} ) ), frameWidth( width ), frameHeight( height )
-        {
-            // Инициализация внутренних буферов кадра
-            frameBuffers.colorBuffer.resize( width * height, glm::vec4( 0.0f ) );
-            frameBuffers.depthBuffer.resize( width * height, 1.0f ); // Инициализация глубины максимальным значением
-        }
+        // Создание устройства только через фабрику
+        static std::shared_ptr<Device> сreate( size_t width, size_t height );
 
         ~Device();
         Device( const Device & ) = delete;
@@ -101,7 +92,7 @@ namespace swr
             IAStage( std::shared_ptr<Device> device ) : parentDevice( device )
             {
             }
-            std::shared_ptr<Device> parentDevice;
+            std::weak_ptr<Device> parentDevice;
             std::shared_ptr<Buffer> vertexBuffer;
             std::shared_ptr<Buffer> indexBuffer;
             PrimitiveTopology primitiveTopology;
@@ -118,7 +109,7 @@ namespace swr
             VSStage( std::shared_ptr<Device> device ) : parentDevice( device )
             {
             }
-            std::shared_ptr<Device> parentDevice;
+            std::weak_ptr<Device> parentDevice;
             VertexShader vertexShader;
         };
 
@@ -136,7 +127,7 @@ namespace swr
             RSStage( std::shared_ptr<Device> device ) : parentDevice( device )
             {
             }
-            std::shared_ptr<Device> parentDevice;
+            std::weak_ptr<Device> parentDevice;
             Viewport viewport;
             bool cullBackface = false;
             bool wireframe = false;
@@ -153,7 +144,7 @@ namespace swr
             PSStage( std::shared_ptr<Device> device ) : parentDevice( device )
             {
             }
-            std::shared_ptr<Device> parentDevice;
+            std::weak_ptr<Device> parentDevice;
             PixelShader pixelShader;
         };
 
@@ -169,7 +160,7 @@ namespace swr
             OMStage( std::shared_ptr<Device> device ) : parentDevice( device )
             {
             }
-            std::shared_ptr<Device> parentDevice;
+            std::weak_ptr<Device> parentDevice;
             glm::vec4 clearColorValue;
         };
 
@@ -216,6 +207,25 @@ namespace swr
         void drawIndexed( size_t indexCount, size_t startIndexLocation, size_t baseVertexLocation );
 
       private:
+        // Приватный конструктор: инициализация внутренних буферов, без shared_from_this()
+        Device( size_t width, size_t height )
+            : iaStage( std::shared_ptr<Device>() ), vsStage( std::shared_ptr<Device>() ),
+              rsStage( std::shared_ptr<Device>() ), psStage( std::shared_ptr<Device>() ),
+              omStage( std::shared_ptr<Device>() ), frameWidth( width ), frameHeight( height )
+        {
+            frameBuffers.colorBuffer.resize( width * height, glm::vec4( 0.0f ) );
+            frameBuffers.depthBuffer.resize( width * height, 1.0f );
+        }
+
+        // Инициализация стадий после создания shared_ptr<Device>
+        void initStages( const std::shared_ptr<Device> &self )
+        {
+            iaStage = IAStage( self );
+            vsStage = VSStage( self );
+            rsStage = RSStage( self );
+            psStage = PSStage( self );
+            omStage = OMStage( self );
+        }
         IAStage iaStage;
         VSStage vsStage;
         RSStage rsStage;

@@ -8,6 +8,7 @@ set(SWR_HEADERS
 
 set(SWR_SOURCES
     ${CMAKE_CURRENT_LIST_DIR}/main.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/swrDevice.cpp
 )
 
 set(SWR_LIBS
