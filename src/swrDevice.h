@@ -69,15 +69,27 @@ namespace swr
         // Создание буфера (управляется shared_ptr с кастомным делетером)
         std::shared_ptr<Buffer> createBuffer( size_t elementSize, size_t elementCount );
 
-        // Установка рендер-таргета (окна SDL)
-        void setRenderTarget( SDL_Window *window );
-
-        // Основной метод рендеринга сцены
-        void draw( PrimitiveTopology topology, Buffer *vertexBuffer, size_t vertexCount, const VertexShader &vs,
-                   const PixelShader &ps );
-
         // Презентация отрендеренного кадра
-        void present();
+        void present( SDL_Renderer *renderer, SDL_Texture *texture );
+
+        // IA Input Assembler stage
+        class IAStage
+        {
+          public:
+            void setVertexBuffer( std::shared_ptr<Buffer> buffer );
+            void setIndexBuffer( std::shared_ptr<Buffer> buffer );
+            void setPrimitiveTopology( PrimitiveTopology topology );
+
+          private:
+            friend class Device;
+            IAStage( std::shared_ptr<Device> device ) : parentDevice( device )
+            {
+            }
+            std::shared_ptr<Device> parentDevice;
+            std::shared_ptr<Buffer> vertexBuffer;
+            std::shared_ptr<Buffer> indexBuffer;
+            PrimitiveTopology primitiveTopology;
+        };
     };
 
 } // namespace swr
