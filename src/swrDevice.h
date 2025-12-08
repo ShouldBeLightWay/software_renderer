@@ -72,16 +72,21 @@ namespace swr
     class Device : public std::enable_shared_from_this<Device>
     {
       public:
-        Device( size_t width, size_t height );
+        Device( size_t width, size_t height )
+            : iaStage( std::shared_ptr<Device>( this, []( Device * ) {} ) ),
+              vsStage( std::shared_ptr<Device>( this, []( Device * ) {} ) ),
+              rsStage( std::shared_ptr<Device>( this, []( Device * ) {} ) ),
+              psStage( std::shared_ptr<Device>( this, []( Device * ) {} ) ),
+              omStage( std::shared_ptr<Device>( this, []( Device * ) {} ) ), frameWidth( width ), frameHeight( height )
+        {
+            // Инициализация внутренних буферов кадра
+            frameBuffers.colorBuffer.resize( width * height, glm::vec4( 0.0f ) );
+            frameBuffers.depthBuffer.resize( width * height, 1.0f ); // Инициализация глубины максимальным значением
+        }
+
         ~Device();
         Device( const Device & ) = delete;
         Device &operator=( const Device & ) = delete;
-
-        // Создание буфера (управляется shared_ptr с кастомным делетером)
-        std::shared_ptr<Buffer> createBuffer( size_t elementSize, size_t elementCount );
-
-        // Презентация отрендеренного кадра
-        void present( SDL_Renderer *renderer, SDL_Texture *texture );
 
         // IA Input Assembler stage
         class IAStage
@@ -190,12 +195,42 @@ namespace swr
             return omStage;
         }
 
+        // Создание буфера (управляется shared_ptr с кастомным делетером)
+        std::shared_ptr<Buffer> createBuffer( size_t elementSize, size_t elementCount );
+
+        size_t deviceFrameWidth() const
+        {
+            return frameWidth;
+        }
+        size_t deviceFrameHeight() const
+        {
+            return frameHeight;
+        }
+
+        // Презентация отрендеренного кадра
+        void present( SDL_Renderer *renderer, SDL_Texture *texture );
+
+        // Управление рендерингом кадра
+        void clear();
+        void draw( size_t vertexCount, size_t startVertexLocation );
+        void drawIndexed( size_t indexCount, size_t startIndexLocation, size_t baseVertexLocation );
+
       private:
         IAStage iaStage;
         VSStage vsStage;
         RSStage rsStage;
         PSStage psStage;
         OMStage omStage;
+
+        struct InternalFrameBuffers
+        {
+            std::vector<glm::vec4> colorBuffer; // RGBA color buffer
+            std::vector<float> depthBuffer;     // Depth buffer
+        };
+
+        InternalFrameBuffers frameBuffers;
+        size_t frameWidth;
+        size_t frameHeight;
     };
 
 } // namespace swr
