@@ -41,6 +41,16 @@ namespace swr
             return elemCount;
         }
 
+        void uploadData( const void *srcData, size_t count, size_t offset = 0 )
+        {
+            if( offset + count > elemCount )
+            {
+                // Выход за пределы буфера
+                throw std::out_of_range( "Buffer::uploadData out of range" );
+            }
+            std::memcpy( dataVec.data() + offset * elemSize, srcData, count * elemSize );
+        }
+
       private:
         size_t elemSize;
         size_t elemCount;
