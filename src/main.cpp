@@ -50,6 +50,33 @@ int main( int argc, char *argv[] )
     // Create software rendering device
     std::shared_ptr<swr::Device> device = swr::Device::create( 800, 600 );
 
+    std::vector<swr::Vertex> vertices = {
+        { { 0.0f, 0.5f, 0.0f }, { 1, 0, 0 } },
+        { { 0.5f, -0.5f, 0.0f }, { 0, 1, 0 } },
+        { { -0.5f, -0.5f, 0.0f }, { 0, 0, 1 } },
+    };
+
+    auto vb = device->createBuffer( sizeof( swr::Vertex ), vertices.size() );
+    vb->uploadData( vertices.data(), vertices.size() );
+
+    device->IA().setVertexBuffer( vb );
+    device->IA().setPrimitiveTopology( swr::PrimitiveTopology::TriangleList );
+
+    swr::VertexShader vs = []( const swr::Vertex &in ) -> swr::VSOutput {
+        swr::VSOutput out;
+        out.position = glm::vec4( in.position, 1.0f ); // Прямая передача позиции
+        out.color = in.color;                          // Прямая передача цвета
+        return out;
+    };
+
+    device->VS().setVertexShader( vs );
+
+    swr::PixelShader ps = []( const swr::PSInput &in ) -> glm::vec4 {
+        return glm::vec4( in.color, 1.0f ); // Выводим цвет вершины с альфой 1.0
+    };
+
+    device->PS().setPixelShader( ps );
+
     // Main loop
     bool running = true;
     SDL_Event event;
@@ -70,6 +97,9 @@ int main( int argc, char *argv[] )
         // Clear device
         device->clear();
         // Here you would set up your pipeline stages and issue draw calls
+
+        device->draw( vertices.size(), 0 );
+
         // Present the rendered frame
         device->present( renderer, texture );
 

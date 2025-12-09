@@ -132,8 +132,120 @@ namespace swr
         std::fill( frameBuffers.depthBuffer.begin(), frameBuffers.depthBuffer.end(), clearDepth );
     }
 
-    void Device::draw( size_t /*vertexCount*/, size_t /*startVertexLocation*/ )
+    // Вычисление ориентированной площади треугольника из которой берутся барицентрические координаты
+    static inline float edgeFunction( const glm::vec2 &a, const glm::vec2 &b, const glm::vec2 &c )
     {
+        return ( c.x - a.x ) * ( b.y - a.y ) - ( c.y - a.y ) * ( b.x - a.x );
+    }
+
+    void Device::draw( size_t vertexCount, size_t startVertexLocation )
+    {
+        // IA - забираем VB
+        if( iaStage.primitiveTopology != PrimitiveTopology::TriangleList )
+        {
+            assert( false && "Unsupported primitive topology" );
+            return;
+        }
+        auto vb = iaStage.vertexBuffer;
+        if( !vb )
+        {
+            assert( false && "No vertex buffer set" );
+            return;
+        }
+
+        const Vertex *vertices = static_cast<const Vertex *>( vb->data() );
+        size_t vertexSize = vb->elementSize();
+
+        // VS - трансформируем вершины прогоняя их через шейдер
+        std::vector<VSOutput> vsOut( vertexCount );
+
+        for( size_t i = 0; i < vertexCount; ++i )
+        {
+            const Vertex &inVertex = *reinterpret_cast<const Vertex *>( reinterpret_cast<const uint8_t *>( vertices ) +
+                                                                        ( startVertexLocation + i ) * vertexSize );
+            vsOut[i] = vsStage.vertexShader( inVertex );
+        }
+
+        // Primitive assembly: triangle list
+        float vpW = static_cast<float>( frameWidth );
+        float vpH = static_cast<float>( frameHeight );
+
+        for( size_t i = 0; i + 2 < vertexCount; i += 3 )
+        {
+            // Take primitive vertices
+            const VSOutput &v0 = vsOut[i];
+            const VSOutput &v1 = vsOut[i + 1];
+            const VSOutput &v2 = vsOut[i + 2];
+
+            // Clip to NDC space
+            auto p0 = glm::vec3( v0.position ) / v0.position.w;
+            auto p1 = glm::vec3( v1.position ) / v1.position.w;
+            auto p2 = glm::vec3( v2.position ) / v2.position.w;
+
+            // NDC to Screen space
+            glm::vec2 s0 = glm::vec2( ( p0.x * 0.5f + 0.5f ) * vpW, ( 1.0f - ( p0.y * 0.5f + 0.5f ) ) * vpH );
+            glm::vec2 s1 = glm::vec2( ( p1.x * 0.5f + 0.5f ) * vpW, ( 1.0f - ( p1.y * 0.5f + 0.5f ) ) * vpH );
+            glm::vec2 s2 = glm::vec2( ( p2.x * 0.5f + 0.5f ) * vpW, ( 1.0f - ( p2.y * 0.5f + 0.5f ) ) * vpH );
+
+            // Boundig box
+            int minX = static_cast<int>( glm::floor( glm::min( glm::min( s0.x, s1.x ), s2.x ) ) );
+            int maxX = static_cast<int>( glm::ceil( glm::max( glm::max( s0.x, s1.x ), s2.x ) ) );
+            int minY = static_cast<int>( glm::floor( glm::min( glm::min( s0.y, s1.y ), s2.y ) ) );
+            int maxY = static_cast<int>( glm::ceil( glm::max( glm::max( s0.y, s1.y ), s2.y ) ) );
+
+            minX = std::max( minX, 0 );
+            minY = std::max( minY, 0 );
+            maxX = std::min( maxX, static_cast<int>( vpW ) - 1 );
+            maxY = std::min( maxY, static_cast<int>( vpH ) - 1 );
+
+            // Полная площадь треугольника
+            float area = edgeFunction( s0, s1, s2 );
+            if( area == 0.0f )
+                continue; // Вырожденный треугольник
+
+            // Растеризация внутри ограничивающего прямоугольника
+            for( int y = minY; y <= maxY; ++y )
+            {
+                for( int x = minX; x <= maxX; ++x )
+                {
+                    glm::vec2 p( static_cast<float>( x ) + 0.5f, static_cast<float>( y ) + 0.5f );
+
+                    // Барицентрические координаты
+                    float w0 = edgeFunction( s1, s2, p );
+                    float w1 = edgeFunction( s2, s0, p );
+                    float w2 = edgeFunction( s0, s1, p );
+
+                    // Если точка внутри треугольника (учитываем знак площади)
+                    if( ( area > 0.0f && w0 >= 0.0f && w1 >= 0.0f && w2 >= 0.0f ) ||
+                        ( area < 0.0f && w0 <= 0.0f && w1 <= 0.0f && w2 <= 0.0f ) )
+                    {
+                        w0 /= area;
+                        w1 /= area;
+                        w2 /= area;
+
+                        // Интерполяция глубины
+                        float depth = w0 * ( p0.z ) + w1 * ( p1.z ) + w2 * ( p2.z );
+
+                        size_t fbIndex = y * frameWidth + x;
+                        // Тест глубины
+                        if( depth < frameBuffers.depthBuffer[fbIndex] )
+                        {
+                            // PS - формируем входные данные и вызываем пиксельный шейдер
+                            PSInput psIn;
+                            psIn.color = w0 * v0.color + w1 * v1.color + w2 * v2.color;
+                            psIn.barycentric = glm::vec3( w0, w1, w2 );
+                            psIn.depth = depth;
+
+                            glm::vec4 outColor = psStage.pixelShader( psIn );
+
+                            // Запись в буферы
+                            frameBuffers.colorBuffer[fbIndex] = outColor;
+                            frameBuffers.depthBuffer[fbIndex] = depth;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     void Device::drawIndexed( size_t /*indexCount*/, size_t /*startIndexLocation*/, size_t /*baseVertexLocation*/ )
