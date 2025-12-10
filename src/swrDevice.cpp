@@ -240,9 +240,14 @@ namespace swr
                     bool onEdge = false;
                     if( rsStage.wireframe )
                     {
-                        // Порог привязан к масштабу edgeFunction; берём небольшой эпсилон
-                        const float eps = 0.5f;
-                        onEdge = ( std::abs( w0 ) <= eps ) || ( std::abs( w1 ) <= eps ) || ( std::abs( w2 ) <= eps );
+                        // Связь: |edgeFunction(e,p)| = |e| * distance(p, edge)
+                        // Поэтому сравниваем с длиной ребра * допуск_в_пикселях
+                        const float epsPixels = 0.75f; // толщина линии ~1px
+                        float L0 = glm::length( s2 - s1 );
+                        float L1 = glm::length( s0 - s2 );
+                        float L2 = glm::length( s1 - s0 );
+                        onEdge = ( std::abs( w0 ) <= L0 * epsPixels ) || ( std::abs( w1 ) <= L1 * epsPixels ) ||
+                                 ( std::abs( w2 ) <= L2 * epsPixels );
                     }
 
                     if( inside && ( !rsStage.wireframe || onEdge ) )
