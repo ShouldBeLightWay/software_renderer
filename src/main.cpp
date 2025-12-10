@@ -130,6 +130,13 @@ int main( int argc, char *argv[] )
                     }
                     std::cout << "Viewport: " << ( viewportEnabled ? "SMALL" : "FULL" ) << std::endl;
                 }
+                else if( ke.key == SDLK_O )
+                {
+                    // Flip triangle winding by swapping two vertices
+                    std::swap( vertices[1], vertices[2] );
+                    vb->uploadData( vertices.data(), vertices.size() );
+                    std::cout << "Winding flipped (O). With cull ON, triangle will toggle visibility." << std::endl;
+                }
             }
         }
 
