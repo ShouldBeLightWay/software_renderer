@@ -167,8 +167,12 @@ namespace swr
         }
 
         // Primitive assembly: triangle list
-        float vpW = static_cast<float>( frameWidth );
-        float vpH = static_cast<float>( frameHeight );
+        // Получаем viewport (если не задан, используем весь кадр)
+        Viewport vp{ 0, 0, static_cast<int>( frameWidth ), static_cast<int>( frameHeight ), 0.0f, 1.0f };
+        if( rsStage.viewport.width > 0 && rsStage.viewport.height > 0 )
+            vp = rsStage.viewport;
+        const float vpW = static_cast<float>( vp.width );
+        const float vpH = static_cast<float>( vp.height );
 
         for( size_t i = 0; i + 2 < vertexCount; i += 3 )
         {
@@ -182,10 +186,15 @@ namespace swr
             auto p1 = glm::vec3( v1.position ) / v1.position.w;
             auto p2 = glm::vec3( v2.position ) / v2.position.w;
 
-            // NDC to Screen space
-            glm::vec2 s0 = glm::vec2( ( p0.x * 0.5f + 0.5f ) * vpW, ( 1.0f - ( p0.y * 0.5f + 0.5f ) ) * vpH );
-            glm::vec2 s1 = glm::vec2( ( p1.x * 0.5f + 0.5f ) * vpW, ( 1.0f - ( p1.y * 0.5f + 0.5f ) ) * vpH );
-            glm::vec2 s2 = glm::vec2( ( p2.x * 0.5f + 0.5f ) * vpW, ( 1.0f - ( p2.y * 0.5f + 0.5f ) ) * vpH );
+            // NDC to Screen space (viewport transform)
+            auto ndcToViewport = [&]( const glm::vec3 &ndc ) {
+                float sx = ( ndc.x * 0.5f + 0.5f ) * vpW + static_cast<float>( vp.x );
+                float sy = ( 1.0f - ( ndc.y * 0.5f + 0.5f ) ) * vpH + static_cast<float>( vp.y );
+                return glm::vec2( sx, sy );
+            };
+            glm::vec2 s0 = ndcToViewport( p0 );
+            glm::vec2 s1 = ndcToViewport( p1 );
+            glm::vec2 s2 = ndcToViewport( p2 );
 
             // Boundig box
             int minX = static_cast<int>( glm::floor( glm::min( glm::min( s0.x, s1.x ), s2.x ) ) );
@@ -193,15 +202,23 @@ namespace swr
             int minY = static_cast<int>( glm::floor( glm::min( glm::min( s0.y, s1.y ), s2.y ) ) );
             int maxY = static_cast<int>( glm::ceil( glm::max( glm::max( s0.y, s1.y ), s2.y ) ) );
 
-            minX = std::max( minX, 0 );
-            minY = std::max( minY, 0 );
-            maxX = std::min( maxX, static_cast<int>( vpW ) - 1 );
-            maxY = std::min( maxY, static_cast<int>( vpH ) - 1 );
+            // Отсечение по viewport прямоугольнику
+            minX = std::max( minX, vp.x );
+            minY = std::max( minY, vp.y );
+            maxX = std::min( maxX, vp.x + vp.width - 1 );
+            maxY = std::min( maxY, vp.y + vp.height - 1 );
 
             // Полная площадь треугольника
             float area = edgeFunction( s0, s1, s2 );
             if( area == 0.0f )
                 continue; // Вырожденный треугольник
+
+            // RS: Отсечение задних граней (простая политика: area>0 считаем фронт-фейс)
+            if( rsStage.cullBackface )
+            {
+                if( area < 0.0f )
+                    continue;
+            }
 
             // Растеризация внутри ограничивающего прямоугольника
             for( int y = minY; y <= maxY; ++y )
@@ -215,9 +232,20 @@ namespace swr
                     float w1 = edgeFunction( s2, s0, p );
                     float w2 = edgeFunction( s0, s1, p );
 
-                    // Если точка внутри треугольника (учитываем знак площади)
-                    if( ( area > 0.0f && w0 >= 0.0f && w1 >= 0.0f && w2 >= 0.0f ) ||
-                        ( area < 0.0f && w0 <= 0.0f && w1 <= 0.0f && w2 <= 0.0f ) )
+                    // Если точка проходит внутренний тест или режим wireframe — пиксели на ребре
+                    bool inside = ( area > 0.0f && w0 >= 0.0f && w1 >= 0.0f && w2 >= 0.0f ) ||
+                                  ( area < 0.0f && w0 <= 0.0f && w1 <= 0.0f && w2 <= 0.0f );
+
+                    // Wireframe: рисуем только пиксели на границе (вблизи ребра)
+                    bool onEdge = false;
+                    if( rsStage.wireframe )
+                    {
+                        // Порог привязан к масштабу edgeFunction; берём небольшой эпсилон
+                        const float eps = 0.5f;
+                        onEdge = ( std::abs( w0 ) <= eps ) || ( std::abs( w1 ) <= eps ) || ( std::abs( w2 ) <= eps );
+                    }
+
+                    if( inside && ( !rsStage.wireframe || onEdge ) )
                     {
                         w0 /= area;
                         w1 /= area;
@@ -226,7 +254,7 @@ namespace swr
                         // Интерполяция глубины
                         float depth = w0 * ( p0.z ) + w1 * ( p1.z ) + w2 * ( p2.z );
 
-                        size_t fbIndex = y * frameWidth + x;
+                        size_t fbIndex = static_cast<size_t>( y ) * frameWidth + static_cast<size_t>( x );
                         // Тест глубины
                         if( depth < frameBuffers.depthBuffer[fbIndex] )
                         {
