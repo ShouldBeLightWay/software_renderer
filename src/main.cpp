@@ -50,6 +50,11 @@ int main( int argc, char *argv[] )
     // Create software rendering device
     std::shared_ptr<swr::Device> device = swr::Device::create( 800, 600 );
 
+    // RS feature toggles
+    bool wireframe = false;
+    bool cullBackface = false;
+    bool viewportEnabled = false;
+
     std::vector<swr::Vertex> vertices = {
         { { 0.0f, 0.5f, 0.0f }, { 1, 0, 0 } },
         { { 0.5f, -0.5f, 0.0f }, { 0, 1, 0 } },
@@ -92,11 +97,59 @@ int main( int argc, char *argv[] )
             {
                 running = false;
             }
+            else if( event.type == SDL_EVENT_KEY_DOWN )
+            {
+                SDL_KeyboardEvent &ke = event.key;
+                // Switch on key presses: W (wireframe), C (cull), V (viewport)
+                if( ke.key == SDLK_W )
+                {
+                    wireframe = !wireframe;
+                    device->RS().setWireframe( wireframe );
+                    std::cout << "Wireframe: " << ( wireframe ? "ON" : "OFF" ) << std::endl;
+                }
+                else if( ke.key == SDLK_C )
+                {
+                    cullBackface = !cullBackface;
+                    device->RS().setCullBackface( cullBackface );
+                    std::cout << "Cull backface: " << ( cullBackface ? "ON" : "OFF" ) << std::endl;
+                }
+                else if( ke.key == SDLK_V )
+                {
+                    viewportEnabled = !viewportEnabled;
+                    if( viewportEnabled )
+                    {
+                        // Centered smaller viewport
+                        swr::Viewport vp{ 200, 150, 400, 300, 0.0f, 1.0f };
+                        device->RS().setViewport( vp );
+                    }
+                    else
+                    {
+                        // Full-frame viewport (width/height<=0 means use full frame in our implementation)
+                        swr::Viewport vp{ 0, 0, 800, 600, 0.0f, 1.0f };
+                        device->RS().setViewport( vp );
+                    }
+                    std::cout << "Viewport: " << ( viewportEnabled ? "SMALL" : "FULL" ) << std::endl;
+                }
+            }
         }
 
         // Clear device
         device->clear();
         // Here you would set up your pipeline stages and issue draw calls
+
+        // Apply RS toggles every frame (in case of external changes)
+        device->RS().setWireframe( wireframe );
+        device->RS().setCullBackface( cullBackface );
+        if( viewportEnabled )
+        {
+            swr::Viewport vp{ 200, 150, 400, 300, 0.0f, 1.0f };
+            device->RS().setViewport( vp );
+        }
+        else
+        {
+            swr::Viewport vp{ 0, 0, 800, 600, 0.0f, 1.0f };
+            device->RS().setViewport( vp );
+        }
 
         device->draw( vertices.size(), 0 );
 
