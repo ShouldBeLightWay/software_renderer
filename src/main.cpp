@@ -138,8 +138,36 @@ int main( int argc, char *argv[] )
             else if( event.type == SDL_EVENT_KEY_DOWN )
             {
                 SDL_KeyboardEvent &ke = event.key;
-                if( auto *scene = sceneManager.getCurrent() )
-                    scene->handleKeyEvent( ke );
+                // Переключение сцен по стрелкам
+                if( ke.key == SDLK_RIGHT )
+                {
+                    if( sceneManager.switchNext( device ) )
+                    {
+                        if( auto *scene = sceneManager.getCurrent() )
+                        {
+                            scene->init();
+                            scene->onResize( static_cast<int>( device->deviceFrameWidth() ),
+                                             static_cast<int>( device->deviceFrameHeight() ) );
+                        }
+                    }
+                }
+                else if( ke.key == SDLK_LEFT )
+                {
+                    if( sceneManager.switchPrev( device ) )
+                    {
+                        if( auto *scene = sceneManager.getCurrent() )
+                        {
+                            scene->init();
+                            scene->onResize( static_cast<int>( device->deviceFrameWidth() ),
+                                             static_cast<int>( device->deviceFrameHeight() ) );
+                        }
+                    }
+                }
+                else
+                {
+                    if( auto *scene = sceneManager.getCurrent() )
+                        scene->handleKeyEvent( ke );
+                }
             }
             else if( event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP )
             {
