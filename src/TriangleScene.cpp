@@ -27,9 +27,14 @@ void TriangleScene::init()
     device->IA().setVertexBuffer( vb );
     device->IA().setPrimitiveTopology( swr::PrimitiveTopology::TriangleList );
 
-    swr::VertexShader vs = []( const swr::Vertex &in ) -> swr::VSOutput {
+    swr::VertexShader vs = [this]( const swr::Vertex &in ) -> swr::VSOutput {
+        // Простая вращательная анимация вокруг оси Z, основанная на angle
+        float c = std::cos( angle );
+        float s = std::sin( angle );
+        glm::vec3 p = in.position;
+        glm::vec3 rotated{ p.x * c - p.y * s, p.x * s + p.y * c, p.z };
         swr::VSOutput out;
-        out.position = glm::vec4( in.position, 1.0f );
+        out.position = glm::vec4( rotated, 1.0f );
         out.color = in.color;
         return out;
     };
@@ -45,14 +50,31 @@ void TriangleScene::init()
     device->RS().setViewport( vp );
 }
 
-void TriangleScene::prepareFrame( float /*dt*/ )
+void TriangleScene::prepareFrame( float dt )
 {
+    if( animate )
+    {
+        angle += angularSpeed * dt;
+        // Нормализуем угол чтобы не рос бесконечно
+        if( angle > 6.28318530718f )
+            angle -= 6.28318530718f;
+        if( angle < -6.28318530718f )
+            angle += 6.28318530718f;
+    }
     // Apply RS toggles every frame (in case of external changes)
     device->RS().setWireframe( wireframe );
     device->RS().setCullBackface( cullBackface );
     if( viewportEnabled )
     {
-        swr::Viewport vp{ 200, 150, 400, 300, 0.0f, 1.0f };
+        // Процентный вьюпорт: центрированный, занимает 50% размера кадра
+        float scale = 0.5f;
+        int fw = static_cast<int>( device->deviceFrameWidth() );
+        int fh = static_cast<int>( device->deviceFrameHeight() );
+        int w = std::max( 1, static_cast<int>( fw * scale ) );
+        int h = std::max( 1, static_cast<int>( fh * scale ) );
+        int x = ( fw - w ) / 2;
+        int y = ( fh - h ) / 2;
+        swr::Viewport vp{ x, y, w, h, 0.0f, 1.0f };
         device->RS().setViewport( vp );
     }
     else
@@ -94,7 +116,15 @@ void TriangleScene::handleKeyEvent( SDL_KeyboardEvent &ke )
         viewportEnabled = !viewportEnabled;
         if( viewportEnabled )
         {
-            swr::Viewport vp{ 200, 150, 400, 300, 0.0f, 1.0f };
+            // Процентный вьюпорт: центрированный 50% от размеров
+            float scale = 0.5f;
+            int fw = static_cast<int>( device->deviceFrameWidth() );
+            int fh = static_cast<int>( device->deviceFrameHeight() );
+            int w = std::max( 1, static_cast<int>( fw * scale ) );
+            int h = std::max( 1, static_cast<int>( fh * scale ) );
+            int x = ( fw - w ) / 2;
+            int y = ( fh - h ) / 2;
+            swr::Viewport vp{ x, y, w, h, 0.0f, 1.0f };
             device->RS().setViewport( vp );
         }
         else
@@ -109,6 +139,11 @@ void TriangleScene::handleKeyEvent( SDL_KeyboardEvent &ke )
         }
         std::cout << "Viewport: " << ( viewportEnabled ? "SMALL" : "FULL" ) << std::endl;
     }
+    else if( ke.key == SDLK_A )
+    {
+        animate = !animate;
+        std::cout << "Animation: " << ( animate ? "ON" : "OFF" ) << std::endl;
+    }
     else if( ke.key == SDLK_O )
     {
         std::swap( vertices[1], vertices[2] );
@@ -122,16 +157,12 @@ void TriangleScene::onResize( int width, int height )
     // Обновим viewport под новый размер кадра
     if( viewportEnabled )
     {
-        swr::Viewport vp{ 200, 150, 400, 300, 0.0f, 1.0f };
-        // Подстраиваем если окно стало меньше маленького вьюпорта
-        if( width < 400 || height < 300 )
-        {
-            int w = std::max( 1, std::min( width, 400 ) );
-            int h = std::max( 1, std::min( height, 300 ) );
-            int x = std::max( 0, ( width - w ) / 2 );
-            int y = std::max( 0, ( height - h ) / 2 );
-            vp = swr::Viewport{ x, y, w, h, 0.0f, 1.0f };
-        }
+        float scale = 0.5f;
+        int w = std::max( 1, static_cast<int>( width * scale ) );
+        int h = std::max( 1, static_cast<int>( height * scale ) );
+        int x = ( width - w ) / 2;
+        int y = ( height - h ) / 2;
+        swr::Viewport vp{ x, y, w, h, 0.0f, 1.0f };
         device->RS().setViewport( vp );
     }
     else
