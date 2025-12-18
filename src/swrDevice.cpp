@@ -55,6 +55,16 @@ namespace swr
         return std::shared_ptr<Buffer>( raw, std::move( deleter ) );
     }
 
+    void Device::resize( size_t width, size_t height )
+    {
+        if( width == 0 || height == 0 )
+            return;
+        frameWidth = width;
+        frameHeight = height;
+        frameBuffers.colorBuffer.assign( width * height, omStage.clearColor() );
+        frameBuffers.depthBuffer.assign( width * height, omStage.depthClearValue() );
+    }
+
     // Заглушки стадий (интерфейсные методы) — реализации по мере развития
     void Device::present( SDL_Renderer *renderer, SDL_Texture *texture )
     {

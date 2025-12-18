@@ -201,6 +201,9 @@ namespace swr
             return frameHeight;
         }
 
+        // Resize internal frame buffers (in pixels)
+        void resize( size_t width, size_t height );
+
         // Презентация отрендеренного кадра
         void present( SDL_Renderer *renderer, SDL_Texture *texture );
 
