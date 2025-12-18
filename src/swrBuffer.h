@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
+#include <stdexcept>
 #include <vector>
 
 namespace swr
