@@ -17,7 +17,13 @@ class SceneManager
     bool setCurrentScene( const std::string &name, std::shared_ptr<swr::Device> dev );
     IScene *getCurrent() const;
 
+    // Switch to next/previous scene in registration order
+    bool switchNext( std::shared_ptr<swr::Device> dev );
+    bool switchPrev( std::shared_ptr<swr::Device> dev );
+
   private:
     std::unordered_map<std::string, Factory> registry;
+    std::vector<std::string> order;
     std::unique_ptr<IScene> current;
+    int currentIndex = -1;
 };
