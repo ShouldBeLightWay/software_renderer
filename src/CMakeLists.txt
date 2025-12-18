@@ -21,7 +21,12 @@ set(SWR_SOURCES_AND_HEADERS
     ${SWR_HEADERS}
 )
 
-add_executable(software_renderer ${SWR_SOURCES_AND_HEADERS})
+#if OS - Windows and build type - Release add WIN32 subsystem flag
+if (WIN32 AND CMAKE_BUILD_TYPE STREQUAL "Release")
+    add_executable(software_renderer WIN32 ${SWR_SOURCES_AND_HEADERS})
+else()
+    add_executable(software_renderer ${SWR_SOURCES_AND_HEADERS})
+endif()
 
 target_link_libraries(software_renderer PRIVATE ${SWR_LIBS})
 
