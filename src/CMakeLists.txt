@@ -1,6 +1,9 @@
 set(SWR_HEADERS
     ${CMAKE_CURRENT_LIST_DIR}/swrBuffer.h
     ${CMAKE_CURRENT_LIST_DIR}/swrDevice.h
+    ${CMAKE_CURRENT_LIST_DIR}/IScene.h
+    ${CMAKE_CURRENT_LIST_DIR}/SceneManager.h
+    ${CMAKE_CURRENT_LIST_DIR}/TriangleScene.h
     # ${CMAKE_CURRENT_LIST_DIR}/swrMath.h
     # ${CMAKE_CURRENT_LIST_DIR}/swrPipeline.h
     # ${CMAKE_CURRENT_LIST_DIR}/swrTypes.h
@@ -9,6 +12,8 @@ set(SWR_HEADERS
 set(SWR_SOURCES
     ${CMAKE_CURRENT_LIST_DIR}/main.cpp
     ${CMAKE_CURRENT_LIST_DIR}/swrDevice.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/SceneManager.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/TriangleScene.cpp
 )
 
 set(SWR_LIBS
