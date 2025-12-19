@@ -266,8 +266,16 @@ namespace swr
                         w1 /= area;
                         w2 /= area;
 
-                        // Интерполяция глубины
-                        float depth = w0 * ( p0.z ) + w1 * ( p1.z ) + w2 * ( p2.z );
+                        // Перспективно-корректная интерполяция: используем 1/w как вес
+                        float invW0 = 1.0f / v0.position.w;
+                        float invW1 = 1.0f / v1.position.w;
+                        float invW2 = 1.0f / v2.position.w;
+                        float denom = w0 * invW0 + w1 * invW1 + w2 * invW2;
+                        if( denom <= 0.0f )
+                            continue;
+
+                        // Интерполяция глубины (z_ndc) с делением на общий знаменатель
+                        float depth = ( w0 * p0.z + w1 * p1.z + w2 * p2.z ) / denom;
 
                         size_t fbIndex = static_cast<size_t>( y ) * frameWidth + static_cast<size_t>( x );
                         // Тест глубины
@@ -275,7 +283,9 @@ namespace swr
                         {
                             // PS - формируем входные данные и вызываем пиксельный шейдер
                             PSInput psIn;
-                            psIn.color = w0 * v0.color + w1 * v1.color + w2 * v2.color;
+                            // Цвет/любые атрибуты тоже интерполируем перспективно-корректно
+                            glm::vec3 colorNum = w0 * v0.color * invW0 + w1 * v1.color * invW1 + w2 * v2.color * invW2;
+                            psIn.color = colorNum / denom;
                             psIn.barycentric = glm::vec3( w0, w1, w2 );
                             psIn.depth = depth;
 
