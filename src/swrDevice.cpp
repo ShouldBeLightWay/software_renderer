@@ -176,7 +176,19 @@ namespace swr
             vsOut[i] = vsStage.vertexShader( inVertex );
         }
 
-        // Primitive assembly: triangle list
+        // Primitive assembly: triangle list, растеризация каждого треугольника
+        for( size_t i = 0; i + 2 < vertexCount; i += 3 )
+        {
+            rasterizeTri( vsOut[i], vsOut[i + 1], vsOut[i + 2] );
+        }
+    }
+
+    void Device::drawIndexed( size_t /*indexCount*/, size_t /*startIndexLocation*/, size_t /*baseVertexLocation*/ )
+    {
+    }
+
+    void Device::rasterizeTri( const VSOutput &v0, const VSOutput &v1, const VSOutput &v2 )
+    {
         // Получаем viewport (если не задан, используем весь кадр)
         Viewport vp{ 0, 0, static_cast<int>( frameWidth ), static_cast<int>( frameHeight ), 0.0f, 1.0f };
         if( rsStage.viewport.width > 0 && rsStage.viewport.height > 0 )
@@ -184,125 +196,113 @@ namespace swr
         const float vpW = static_cast<float>( vp.width );
         const float vpH = static_cast<float>( vp.height );
 
-        for( size_t i = 0; i + 2 < vertexCount; i += 3 )
+        // Clip to NDC space
+        auto p0 = glm::vec3( v0.position ) / v0.position.w;
+        auto p1 = glm::vec3( v1.position ) / v1.position.w;
+        auto p2 = glm::vec3( v2.position ) / v2.position.w;
+
+        // NDC to Screen space (viewport transform)
+        auto ndcToViewport = [&]( const glm::vec3 &ndc ) {
+            float sx = ( ndc.x * 0.5f + 0.5f ) * vpW + static_cast<float>( vp.x );
+            float sy = ( 1.0f - ( ndc.y * 0.5f + 0.5f ) ) * vpH + static_cast<float>( vp.y );
+            return glm::vec2( sx, sy );
+        };
+        glm::vec2 s0 = ndcToViewport( p0 );
+        glm::vec2 s1 = ndcToViewport( p1 );
+        glm::vec2 s2 = ndcToViewport( p2 );
+
+        // Boundig box
+        int minX = static_cast<int>( glm::floor( glm::min( glm::min( s0.x, s1.x ), s2.x ) ) );
+        int maxX = static_cast<int>( glm::ceil( glm::max( glm::max( s0.x, s1.x ), s2.x ) ) );
+        int minY = static_cast<int>( glm::floor( glm::min( glm::min( s0.y, s1.y ), s2.y ) ) );
+        int maxY = static_cast<int>( glm::ceil( glm::max( glm::max( s0.y, s1.y ), s2.y ) ) );
+
+        // Отсечение по viewport прямоугольнику
+        minX = std::max( minX, vp.x );
+        minY = std::max( minY, vp.y );
+        maxX = std::min( maxX, vp.x + vp.width - 1 );
+        maxY = std::min( maxY, vp.y + vp.height - 1 );
+
+        // Полная площадь треугольника
+        float area = edgeFunction( s0, s1, s2 );
+        if( area == 0.0f )
+            return; // Вырожденный треугольник
+
+        // RS: Отсечение задних граней (простая политика: area>0 считаем фронт-фейс)
+        if( rsStage.cullBackface )
         {
-            // Take primitive vertices
-            const VSOutput &v0 = vsOut[i];
-            const VSOutput &v1 = vsOut[i + 1];
-            const VSOutput &v2 = vsOut[i + 2];
+            if( area < 0.0f )
+                return;
+        }
 
-            // Clip to NDC space
-            auto p0 = glm::vec3( v0.position ) / v0.position.w;
-            auto p1 = glm::vec3( v1.position ) / v1.position.w;
-            auto p2 = glm::vec3( v2.position ) / v2.position.w;
-
-            // NDC to Screen space (viewport transform)
-            auto ndcToViewport = [&]( const glm::vec3 &ndc ) {
-                float sx = ( ndc.x * 0.5f + 0.5f ) * vpW + static_cast<float>( vp.x );
-                float sy = ( 1.0f - ( ndc.y * 0.5f + 0.5f ) ) * vpH + static_cast<float>( vp.y );
-                return glm::vec2( sx, sy );
-            };
-            glm::vec2 s0 = ndcToViewport( p0 );
-            glm::vec2 s1 = ndcToViewport( p1 );
-            glm::vec2 s2 = ndcToViewport( p2 );
-
-            // Boundig box
-            int minX = static_cast<int>( glm::floor( glm::min( glm::min( s0.x, s1.x ), s2.x ) ) );
-            int maxX = static_cast<int>( glm::ceil( glm::max( glm::max( s0.x, s1.x ), s2.x ) ) );
-            int minY = static_cast<int>( glm::floor( glm::min( glm::min( s0.y, s1.y ), s2.y ) ) );
-            int maxY = static_cast<int>( glm::ceil( glm::max( glm::max( s0.y, s1.y ), s2.y ) ) );
-
-            // Отсечение по viewport прямоугольнику
-            minX = std::max( minX, vp.x );
-            minY = std::max( minY, vp.y );
-            maxX = std::min( maxX, vp.x + vp.width - 1 );
-            maxY = std::min( maxY, vp.y + vp.height - 1 );
-
-            // Полная площадь треугольника
-            float area = edgeFunction( s0, s1, s2 );
-            if( area == 0.0f )
-                continue; // Вырожденный треугольник
-
-            // RS: Отсечение задних граней (простая политика: area>0 считаем фронт-фейс)
-            if( rsStage.cullBackface )
+        // Растеризация внутри ограничивающего прямоугольника
+        for( int y = minY; y <= maxY; ++y )
+        {
+            for( int x = minX; x <= maxX; ++x )
             {
-                if( area < 0.0f )
-                    continue;
-            }
+                glm::vec2 p( static_cast<float>( x ) + 0.5f, static_cast<float>( y ) + 0.5f );
 
-            // Растеризация внутри ограничивающего прямоугольника
-            for( int y = minY; y <= maxY; ++y )
-            {
-                for( int x = minX; x <= maxX; ++x )
+                // Барицентрические координаты
+                float w0 = edgeFunction( s1, s2, p );
+                float w1 = edgeFunction( s2, s0, p );
+                float w2 = edgeFunction( s0, s1, p );
+
+                // Если точка проходит внутренний тест или режим wireframe — пиксели на ребре
+                bool inside = ( area > 0.0f && w0 >= 0.0f && w1 >= 0.0f && w2 >= 0.0f ) ||
+                              ( area < 0.0f && w0 <= 0.0f && w1 <= 0.0f && w2 <= 0.0f );
+
+                // Wireframe: рисуем только пиксели на границе (вблизи ребра)
+                bool onEdge = false;
+                if( rsStage.wireframe )
                 {
-                    glm::vec2 p( static_cast<float>( x ) + 0.5f, static_cast<float>( y ) + 0.5f );
+                    // Связь: |edgeFunction(e,p)| = |e| * distance(p, edge)
+                    // Поэтому сравниваем с длиной ребра * допуск_в_пикселях
+                    const float epsPixels = 0.75f; // толщина линии ~1px
+                    float L0 = glm::length( s2 - s1 );
+                    float L1 = glm::length( s0 - s2 );
+                    float L2 = glm::length( s1 - s0 );
+                    onEdge = ( std::abs( w0 ) <= L0 * epsPixels ) || ( std::abs( w1 ) <= L1 * epsPixels ) ||
+                             ( std::abs( w2 ) <= L2 * epsPixels );
+                }
 
-                    // Барицентрические координаты
-                    float w0 = edgeFunction( s1, s2, p );
-                    float w1 = edgeFunction( s2, s0, p );
-                    float w2 = edgeFunction( s0, s1, p );
+                if( inside && ( !rsStage.wireframe || onEdge ) )
+                {
+                    w0 /= area;
+                    w1 /= area;
+                    w2 /= area;
 
-                    // Если точка проходит внутренний тест или режим wireframe — пиксели на ребре
-                    bool inside = ( area > 0.0f && w0 >= 0.0f && w1 >= 0.0f && w2 >= 0.0f ) ||
-                                  ( area < 0.0f && w0 <= 0.0f && w1 <= 0.0f && w2 <= 0.0f );
+                    // Перспективно-корректная интерполяция: используем 1/w как вес
+                    float invW0 = 1.0f / v0.position.w;
+                    float invW1 = 1.0f / v1.position.w;
+                    float invW2 = 1.0f / v2.position.w;
+                    float denom = w0 * invW0 + w1 * invW1 + w2 * invW2;
+                    if( denom <= 0.0f )
+                        continue;
 
-                    // Wireframe: рисуем только пиксели на границе (вблизи ребра)
-                    bool onEdge = false;
-                    if( rsStage.wireframe )
+                    // Интерполяция глубины (z_ndc) с делением на общий знаменатель
+                    float depth = ( w0 * p0.z + w1 * p1.z + w2 * p2.z ) / denom;
+
+                    size_t fbIndex = static_cast<size_t>( y ) * frameWidth + static_cast<size_t>( x );
+                    // Тест глубины
+                    if( depth < frameBuffers.depthBuffer[fbIndex] )
                     {
-                        // Связь: |edgeFunction(e,p)| = |e| * distance(p, edge)
-                        // Поэтому сравниваем с длиной ребра * допуск_в_пикселях
-                        const float epsPixels = 0.75f; // толщина линии ~1px
-                        float L0 = glm::length( s2 - s1 );
-                        float L1 = glm::length( s0 - s2 );
-                        float L2 = glm::length( s1 - s0 );
-                        onEdge = ( std::abs( w0 ) <= L0 * epsPixels ) || ( std::abs( w1 ) <= L1 * epsPixels ) ||
-                                 ( std::abs( w2 ) <= L2 * epsPixels );
-                    }
+                        // PS - формируем входные данные и вызываем пиксельный шейдер
+                        PSInput psIn;
+                        // Цвет/любые атрибуты тоже интерполируем перспективно-корректно
+                        glm::vec3 colorNum = w0 * v0.color * invW0 + w1 * v1.color * invW1 + w2 * v2.color * invW2;
+                        psIn.color = colorNum / denom;
+                        psIn.barycentric = glm::vec3( w0, w1, w2 );
+                        psIn.depth = depth;
 
-                    if( inside && ( !rsStage.wireframe || onEdge ) )
-                    {
-                        w0 /= area;
-                        w1 /= area;
-                        w2 /= area;
+                        glm::vec4 outColor = psStage.pixelShader( psIn );
 
-                        // Перспективно-корректная интерполяция: используем 1/w как вес
-                        float invW0 = 1.0f / v0.position.w;
-                        float invW1 = 1.0f / v1.position.w;
-                        float invW2 = 1.0f / v2.position.w;
-                        float denom = w0 * invW0 + w1 * invW1 + w2 * invW2;
-                        if( denom <= 0.0f )
-                            continue;
-
-                        // Интерполяция глубины (z_ndc) с делением на общий знаменатель
-                        float depth = ( w0 * p0.z + w1 * p1.z + w2 * p2.z ) / denom;
-
-                        size_t fbIndex = static_cast<size_t>( y ) * frameWidth + static_cast<size_t>( x );
-                        // Тест глубины
-                        if( depth < frameBuffers.depthBuffer[fbIndex] )
-                        {
-                            // PS - формируем входные данные и вызываем пиксельный шейдер
-                            PSInput psIn;
-                            // Цвет/любые атрибуты тоже интерполируем перспективно-корректно
-                            glm::vec3 colorNum = w0 * v0.color * invW0 + w1 * v1.color * invW1 + w2 * v2.color * invW2;
-                            psIn.color = colorNum / denom;
-                            psIn.barycentric = glm::vec3( w0, w1, w2 );
-                            psIn.depth = depth;
-
-                            glm::vec4 outColor = psStage.pixelShader( psIn );
-
-                            // Запись в буферы
-                            frameBuffers.colorBuffer[fbIndex] = outColor;
-                            frameBuffers.depthBuffer[fbIndex] = depth;
-                        }
+                        // Запись в буферы
+                        frameBuffers.colorBuffer[fbIndex] = outColor;
+                        frameBuffers.depthBuffer[fbIndex] = depth;
                     }
                 }
             }
         }
-    }
-
-    void Device::drawIndexed( size_t /*indexCount*/, size_t /*startIndexLocation*/, size_t /*baseVertexLocation*/ )
-    {
     }
 
     // IAStage

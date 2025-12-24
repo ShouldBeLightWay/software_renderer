@@ -213,6 +213,8 @@ namespace swr
         void drawIndexed( size_t indexCount, size_t startIndexLocation, size_t baseVertexLocation );
 
       private:
+        // Внутренний метод растеризации одного треугольника (после VS)
+        void rasterizeTri( const VSOutput &v0, const VSOutput &v1, const VSOutput &v2 );
         // Приватный конструктор: инициализация внутренних буферов, без shared_from_this()
         Device( size_t width, size_t height )
             : iaStage( std::shared_ptr<Device>() ), vsStage( std::shared_ptr<Device>() ),
