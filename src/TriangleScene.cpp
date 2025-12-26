@@ -21,7 +21,7 @@ void TriangleScene::init()
         { { -0.5f, -0.5f, 0.0f }, { 0, 0, 1 } },
     };
 
-    vb = device->createBuffer( sizeof( swr::Vertex ), vertices.size() );
+    vb = device->createBuffer( sizeof( swr::Vertex ), vertices.size(), swr::BufferFormat::Unknown );
     vb->uploadData( vertices.data(), vertices.size() );
 
     device->IA().setVertexBuffer( vb );
