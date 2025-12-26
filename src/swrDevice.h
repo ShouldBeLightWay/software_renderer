@@ -54,7 +54,9 @@ namespace swr
         Unknown,
         R8G8B8A8_UNORM,
         D24_UNORM_S8_UINT,
-        // Добавить другие форматы по мере необходимости
+        R16_UINT, // Для индексных буферов (USHORT/UINT16)
+        R32_UINT, // Для индексных буферов (UINT/UINT32)
+                  // Добавить другие форматы по мере необходимости
     };
 
     // Порт вывода (viewport)
@@ -190,7 +192,7 @@ namespace swr
         }
 
         // Создание буфера (управляется shared_ptr с кастомным делетером)
-        std::shared_ptr<Buffer> createBuffer( size_t elementSize, size_t elementCount );
+        std::shared_ptr<Buffer> createBuffer( size_t elementSize, size_t elementCount, BufferFormat format );
 
         size_t deviceFrameWidth() const
         {

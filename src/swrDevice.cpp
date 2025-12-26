@@ -42,11 +42,11 @@ namespace swr
 
     Device::~Device() = default;
 
-    std::shared_ptr<Buffer> Device::createBuffer( size_t elementSize, size_t elementCount )
+    std::shared_ptr<Buffer> Device::createBuffer( size_t elementSize, size_t elementCount, BufferFormat format )
     {
         // Делетер захватывает weak_ptr<Device>, чтобы избежать продления жизни устройства
         std::weak_ptr<Device> wself = shared_from_this();
-        Buffer *raw = new Buffer( elementSize, elementCount );
+        Buffer *raw = new Buffer( elementSize, elementCount, format );
         auto deleter = [wself]( Buffer *p ) {
             // Если устройство ещё живо, тут можно выполнить внутреннюю очистку
             // if (auto self = wself.lock()) { /* self->onBufferDestroy(p); */ }
@@ -183,8 +183,71 @@ namespace swr
         }
     }
 
-    void Device::drawIndexed( size_t /*indexCount*/, size_t /*startIndexLocation*/, size_t /*baseVertexLocation*/ )
+    void Device::drawIndexed( size_t indexCount, size_t startIndexLocation, size_t baseVertexLocation )
     {
+        if( iaStage.primitiveTopology != PrimitiveTopology::TriangleList )
+        {
+            assert( false && "Unsupported primitive topology" );
+            return;
+        }
+
+        auto vb = iaStage.vertexBuffer;
+        auto ib = iaStage.indexBuffer;
+        if( !vb || !ib )
+        {
+            assert( false && "Vertex or Index buffer not set" );
+            return;
+        }
+
+        // Поддерживаем форматы индексов R16_UINT и R32_UINT
+        BufferFormat idxFmt = ib->format();
+        size_t idxElemSize = ib->elementSize();
+        if( !( ( idxFmt == BufferFormat::R16_UINT && idxElemSize == 2 ) ||
+               ( idxFmt == BufferFormat::R32_UINT && idxElemSize == 4 ) ) )
+        {
+            assert( false && "Unsupported index buffer format/elementSize" );
+            return;
+        }
+
+        const uint8_t *idxBytes = static_cast<const uint8_t *>( ib->data() );
+        const Vertex *vertices = static_cast<const Vertex *>( vb->data() );
+        size_t vertexSize = vb->elementSize();
+
+        // Идём по тройкам индексов
+        for( size_t i = 0; i + 2 < indexCount; i += 3 )
+        {
+            auto readIndex = [&]( size_t idxPos ) -> uint32_t {
+                size_t offset = ( startIndexLocation + idxPos ) * idxElemSize;
+                if( idxFmt == BufferFormat::R16_UINT )
+                {
+                    const uint16_t *p = reinterpret_cast<const uint16_t *>( idxBytes + offset );
+                    return static_cast<uint32_t>( *p );
+                }
+                else
+                {
+                    const uint32_t *p = reinterpret_cast<const uint32_t *>( idxBytes + offset );
+                    return *p;
+                }
+            };
+
+            uint32_t i0 = readIndex( i ) + static_cast<uint32_t>( baseVertexLocation );
+            uint32_t i1 = readIndex( i + 1 ) + static_cast<uint32_t>( baseVertexLocation );
+            uint32_t i2 = readIndex( i + 2 ) + static_cast<uint32_t>( baseVertexLocation );
+
+            // Выполняем VS для каждой вершины (при желании можно закэшировать)
+            const Vertex &vIn0 = *reinterpret_cast<const Vertex *>( reinterpret_cast<const uint8_t *>( vertices ) +
+                                                                    static_cast<size_t>( i0 ) * vertexSize );
+            const Vertex &vIn1 = *reinterpret_cast<const Vertex *>( reinterpret_cast<const uint8_t *>( vertices ) +
+                                                                    static_cast<size_t>( i1 ) * vertexSize );
+            const Vertex &vIn2 = *reinterpret_cast<const Vertex *>( reinterpret_cast<const uint8_t *>( vertices ) +
+                                                                    static_cast<size_t>( i2 ) * vertexSize );
+
+            VSOutput o0 = vsStage.vertexShader( vIn0 );
+            VSOutput o1 = vsStage.vertexShader( vIn1 );
+            VSOutput o2 = vsStage.vertexShader( vIn2 );
+
+            rasterizeTri( o0, o1, o2 );
+        }
     }
 
     void Device::rasterizeTri( const VSOutput &v0, const VSOutput &v1, const VSOutput &v2 )
