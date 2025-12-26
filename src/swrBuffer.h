@@ -8,6 +8,8 @@
 
 namespace swr
 {
+    // Forward decl BufferFormat (определён в swrDevice.h)
+    enum class BufferFormat;
     // Forward decl device class
     class Device;
 
@@ -16,8 +18,8 @@ namespace swr
     {
         // Поскольку созданием буфера занимается только устройство, конструктор приватный
       private:
-        Buffer( size_t elementSize, size_t elementCount )
-            : elemSize( elementSize ), elemCount( elementCount ), dataVec( elementSize * elementCount )
+        Buffer( size_t elementSize, size_t elementCount, BufferFormat fmt )
+            : elemSize( elementSize ), elemCount( elementCount ), dataVec( elementSize * elementCount ), format_( fmt )
         {
         }
         friend class Device; // Разрешить Device создавать Buffer
@@ -43,6 +45,11 @@ namespace swr
             return elemCount;
         }
 
+        BufferFormat format() const
+        {
+            return format_;
+        }
+
         void uploadData( const void *srcData, size_t count, size_t offset = 0 )
         {
             if( offset + count > elemCount )
@@ -57,5 +64,6 @@ namespace swr
         size_t elemSize;
         size_t elemCount;
         std::vector<uint8_t> dataVec;
+        BufferFormat format_;
     };
 } // namespace swr
