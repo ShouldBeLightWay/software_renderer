@@ -85,10 +85,12 @@ namespace swr
         {
         }
 
+        // Read individual float components by index (e.g., reading X, Y, or Z from a vec3)
         float readFloat1( Semantic semantic, size_t index = 0 ) const;
-        glm::vec2 readFloat2( Semantic semantic, size_t index = 0 ) const;
-        glm::vec3 readFloat3( Semantic semantic, size_t index = 0 ) const;
-        glm::vec4 readFloat4( Semantic semantic, size_t index = 0 ) const;
+        // Read vector attributes (index parameter not applicable for these)
+        glm::vec2 readFloat2( Semantic semantic ) const;
+        glm::vec3 readFloat3( Semantic semantic ) const;
+        glm::vec4 readFloat4( Semantic semantic ) const;
 
       private:
         const uint8_t *data;
