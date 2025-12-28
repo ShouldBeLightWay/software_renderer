@@ -42,17 +42,27 @@ namespace swr
 
     Device::~Device() = default;
 
-    std::shared_ptr<Buffer> Device::createBuffer( size_t elementSize, size_t elementCount )
+    std::shared_ptr<Buffer> Device::createBuffer( size_t elementSize, size_t elementCount, BufferFormat format )
     {
         // Делетер захватывает weak_ptr<Device>, чтобы избежать продления жизни устройства
         std::weak_ptr<Device> wself = shared_from_this();
-        Buffer *raw = new Buffer( elementSize, elementCount );
+        Buffer *raw = new Buffer( elementSize, elementCount, format );
         auto deleter = [wself]( Buffer *p ) {
             // Если устройство ещё живо, тут можно выполнить внутреннюю очистку
             // if (auto self = wself.lock()) { /* self->onBufferDestroy(p); */ }
             delete p;
         };
         return std::shared_ptr<Buffer>( raw, std::move( deleter ) );
+    }
+
+    void Device::resize( size_t width, size_t height )
+    {
+        if( width == 0 || height == 0 )
+            return;
+        frameWidth = width;
+        frameHeight = height;
+        frameBuffers.colorBuffer.assign( width * height, omStage.clearColor() );
+        frameBuffers.depthBuffer.assign( width * height, omStage.depthClearValue() );
     }
 
     // Заглушки стадий (интерфейсные методы) — реализации по мере развития
@@ -132,12 +142,230 @@ namespace swr
         std::fill( frameBuffers.depthBuffer.begin(), frameBuffers.depthBuffer.end(), clearDepth );
     }
 
-    void Device::draw( size_t /*vertexCount*/, size_t /*startVertexLocation*/ )
+    // Вычисление ориентированной площади треугольника из которой берутся барицентрические координаты
+    static inline float edgeFunction( const glm::vec2 &a, const glm::vec2 &b, const glm::vec2 &c )
     {
+        return ( c.x - a.x ) * ( b.y - a.y ) - ( c.y - a.y ) * ( b.x - a.x );
     }
 
-    void Device::drawIndexed( size_t /*indexCount*/, size_t /*startIndexLocation*/, size_t /*baseVertexLocation*/ )
+    void Device::draw( size_t vertexCount, size_t startVertexLocation )
     {
+        // IA - забираем VB
+        if( iaStage.primitiveTopology != PrimitiveTopology::TriangleList )
+        {
+            assert( false && "Unsupported primitive topology" );
+            return;
+        }
+        auto vb = iaStage.vertexBuffer;
+        if( !vb )
+        {
+            assert( false && "No vertex buffer set" );
+            return;
+        }
+
+        const Vertex *vertices = static_cast<const Vertex *>( vb->data() );
+        size_t vertexSize = vb->elementSize();
+
+        // VS - трансформируем вершины прогоняя их через шейдер
+        std::vector<VSOutput> vsOut( vertexCount );
+
+        for( size_t i = 0; i < vertexCount; ++i )
+        {
+            const Vertex &inVertex = *reinterpret_cast<const Vertex *>( reinterpret_cast<const uint8_t *>( vertices ) +
+                                                                        ( startVertexLocation + i ) * vertexSize );
+            vsOut[i] = vsStage.vertexShader( inVertex );
+        }
+
+        // Primitive assembly: triangle list, растеризация каждого треугольника
+        for( size_t i = 0; i + 2 < vertexCount; i += 3 )
+        {
+            rasterizeTri( vsOut[i], vsOut[i + 1], vsOut[i + 2] );
+        }
+    }
+
+    void Device::drawIndexed( size_t indexCount, size_t startIndexLocation, size_t baseVertexLocation )
+    {
+        if( iaStage.primitiveTopology != PrimitiveTopology::TriangleList )
+        {
+            assert( false && "Unsupported primitive topology" );
+            return;
+        }
+
+        auto vb = iaStage.vertexBuffer;
+        auto ib = iaStage.indexBuffer;
+        if( !vb || !ib )
+        {
+            assert( false && "Vertex or Index buffer not set" );
+            return;
+        }
+
+        // Поддерживаем форматы индексов R16_UINT и R32_UINT
+        BufferFormat idxFmt = ib->format();
+        size_t idxElemSize = ib->elementSize();
+        if( !( ( idxFmt == BufferFormat::R16_UINT && idxElemSize == 2 ) ||
+               ( idxFmt == BufferFormat::R32_UINT && idxElemSize == 4 ) ) )
+        {
+            assert( false && "Unsupported index buffer format/elementSize" );
+            return;
+        }
+
+        const uint8_t *idxBytes = static_cast<const uint8_t *>( ib->data() );
+        const Vertex *vertices = static_cast<const Vertex *>( vb->data() );
+        size_t vertexSize = vb->elementSize();
+
+        // Идём по тройкам индексов
+        for( size_t i = 0; i + 2 < indexCount; i += 3 )
+        {
+            auto readIndex = [&]( size_t idxPos ) -> uint32_t {
+                size_t offset = ( startIndexLocation + idxPos ) * idxElemSize;
+                if( idxFmt == BufferFormat::R16_UINT )
+                {
+                    const uint16_t *p = reinterpret_cast<const uint16_t *>( idxBytes + offset );
+                    return static_cast<uint32_t>( *p );
+                }
+                else
+                {
+                    const uint32_t *p = reinterpret_cast<const uint32_t *>( idxBytes + offset );
+                    return *p;
+                }
+            };
+
+            uint32_t i0 = readIndex( i ) + static_cast<uint32_t>( baseVertexLocation );
+            uint32_t i1 = readIndex( i + 1 ) + static_cast<uint32_t>( baseVertexLocation );
+            uint32_t i2 = readIndex( i + 2 ) + static_cast<uint32_t>( baseVertexLocation );
+
+            // Выполняем VS для каждой вершины (при желании можно закэшировать)
+            const Vertex &vIn0 = *reinterpret_cast<const Vertex *>( reinterpret_cast<const uint8_t *>( vertices ) +
+                                                                    static_cast<size_t>( i0 ) * vertexSize );
+            const Vertex &vIn1 = *reinterpret_cast<const Vertex *>( reinterpret_cast<const uint8_t *>( vertices ) +
+                                                                    static_cast<size_t>( i1 ) * vertexSize );
+            const Vertex &vIn2 = *reinterpret_cast<const Vertex *>( reinterpret_cast<const uint8_t *>( vertices ) +
+                                                                    static_cast<size_t>( i2 ) * vertexSize );
+
+            VSOutput o0 = vsStage.vertexShader( vIn0 );
+            VSOutput o1 = vsStage.vertexShader( vIn1 );
+            VSOutput o2 = vsStage.vertexShader( vIn2 );
+
+            rasterizeTri( o0, o1, o2 );
+        }
+    }
+
+    void Device::rasterizeTri( const VSOutput &v0, const VSOutput &v1, const VSOutput &v2 )
+    {
+        // Получаем viewport (если не задан, используем весь кадр)
+        Viewport vp{ 0, 0, static_cast<int>( frameWidth ), static_cast<int>( frameHeight ), 0.0f, 1.0f };
+        if( rsStage.viewport.width > 0 && rsStage.viewport.height > 0 )
+            vp = rsStage.viewport;
+        const float vpW = static_cast<float>( vp.width );
+        const float vpH = static_cast<float>( vp.height );
+
+        // Clip to NDC space
+        auto p0 = glm::vec3( v0.position ) / v0.position.w;
+        auto p1 = glm::vec3( v1.position ) / v1.position.w;
+        auto p2 = glm::vec3( v2.position ) / v2.position.w;
+
+        // NDC to Screen space (viewport transform)
+        auto ndcToViewport = [&]( const glm::vec3 &ndc ) {
+            float sx = ( ndc.x * 0.5f + 0.5f ) * vpW + static_cast<float>( vp.x );
+            float sy = ( 1.0f - ( ndc.y * 0.5f + 0.5f ) ) * vpH + static_cast<float>( vp.y );
+            return glm::vec2( sx, sy );
+        };
+        glm::vec2 s0 = ndcToViewport( p0 );
+        glm::vec2 s1 = ndcToViewport( p1 );
+        glm::vec2 s2 = ndcToViewport( p2 );
+
+        // Boundig box
+        int minX = static_cast<int>( glm::floor( glm::min( glm::min( s0.x, s1.x ), s2.x ) ) );
+        int maxX = static_cast<int>( glm::ceil( glm::max( glm::max( s0.x, s1.x ), s2.x ) ) );
+        int minY = static_cast<int>( glm::floor( glm::min( glm::min( s0.y, s1.y ), s2.y ) ) );
+        int maxY = static_cast<int>( glm::ceil( glm::max( glm::max( s0.y, s1.y ), s2.y ) ) );
+
+        // Отсечение по viewport прямоугольнику
+        minX = std::max( minX, vp.x );
+        minY = std::max( minY, vp.y );
+        maxX = std::min( maxX, vp.x + vp.width - 1 );
+        maxY = std::min( maxY, vp.y + vp.height - 1 );
+
+        // Полная площадь треугольника
+        float area = edgeFunction( s0, s1, s2 );
+        if( area == 0.0f )
+            return; // Вырожденный треугольник
+
+        // RS: Отсечение задних граней (простая политика: area>0 считаем фронт-фейс)
+        if( rsStage.cullBackface )
+        {
+            if( area < 0.0f )
+                return;
+        }
+
+        // Растеризация внутри ограничивающего прямоугольника
+        for( int y = minY; y <= maxY; ++y )
+        {
+            for( int x = minX; x <= maxX; ++x )
+            {
+                glm::vec2 p( static_cast<float>( x ) + 0.5f, static_cast<float>( y ) + 0.5f );
+
+                // Барицентрические координаты
+                float w0 = edgeFunction( s1, s2, p );
+                float w1 = edgeFunction( s2, s0, p );
+                float w2 = edgeFunction( s0, s1, p );
+
+                // Если точка проходит внутренний тест или режим wireframe — пиксели на ребре
+                bool inside = ( area > 0.0f && w0 >= 0.0f && w1 >= 0.0f && w2 >= 0.0f ) ||
+                              ( area < 0.0f && w0 <= 0.0f && w1 <= 0.0f && w2 <= 0.0f );
+
+                // Wireframe: рисуем только пиксели на границе (вблизи ребра)
+                bool onEdge = false;
+                if( rsStage.wireframe )
+                {
+                    // Связь: |edgeFunction(e,p)| = |e| * distance(p, edge)
+                    // Поэтому сравниваем с длиной ребра * допуск_в_пикселях
+                    const float epsPixels = 0.75f; // толщина линии ~1px
+                    float L0 = glm::length( s2 - s1 );
+                    float L1 = glm::length( s0 - s2 );
+                    float L2 = glm::length( s1 - s0 );
+                    onEdge = ( std::abs( w0 ) <= L0 * epsPixels ) || ( std::abs( w1 ) <= L1 * epsPixels ) ||
+                             ( std::abs( w2 ) <= L2 * epsPixels );
+                }
+
+                if( inside && ( !rsStage.wireframe || onEdge ) )
+                {
+                    w0 /= area;
+                    w1 /= area;
+                    w2 /= area;
+
+                    // Перспективно-корректная интерполяция: используем 1/w как вес
+                    float invW0 = 1.0f / v0.position.w;
+                    float invW1 = 1.0f / v1.position.w;
+                    float invW2 = 1.0f / v2.position.w;
+                    float denom = w0 * invW0 + w1 * invW1 + w2 * invW2;
+                    if( denom <= 0.0f )
+                        continue;
+
+                    // Интерполяция глубины (z_ndc) с делением на общий знаменатель
+                    float depth = ( w0 * p0.z + w1 * p1.z + w2 * p2.z ) / denom;
+
+                    size_t fbIndex = static_cast<size_t>( y ) * frameWidth + static_cast<size_t>( x );
+                    // Тест глубины
+                    if( depth < frameBuffers.depthBuffer[fbIndex] )
+                    {
+                        // PS - формируем входные данные и вызываем пиксельный шейдер
+                        PSInput psIn;
+                        // Цвет/любые атрибуты тоже интерполируем перспективно-корректно
+                        glm::vec3 colorNum = w0 * v0.color * invW0 + w1 * v1.color * invW1 + w2 * v2.color * invW2;
+                        psIn.color = colorNum / denom;
+                        psIn.barycentric = glm::vec3( w0, w1, w2 );
+                        psIn.depth = depth;
+
+                        glm::vec4 outColor = psStage.pixelShader( psIn );
+
+                        // Запись в буферы
+                        frameBuffers.colorBuffer[fbIndex] = outColor;
+                        frameBuffers.depthBuffer[fbIndex] = depth;
+                    }
+                }
+            }
+        }
     }
 
     // IAStage

@@ -54,7 +54,9 @@ namespace swr
         Unknown,
         R8G8B8A8_UNORM,
         D24_UNORM_S8_UINT,
-        // Добавить другие форматы по мере необходимости
+        R16_UINT, // Для индексных буферов (USHORT/UINT16)
+        R32_UINT, // Для индексных буферов (UINT/UINT32)
+                  // Добавить другие форматы по мере необходимости
     };
 
     // Порт вывода (viewport)
@@ -190,7 +192,7 @@ namespace swr
         }
 
         // Создание буфера (управляется shared_ptr с кастомным делетером)
-        std::shared_ptr<Buffer> createBuffer( size_t elementSize, size_t elementCount );
+        std::shared_ptr<Buffer> createBuffer( size_t elementSize, size_t elementCount, BufferFormat format );
 
         size_t deviceFrameWidth() const
         {
@@ -201,6 +203,9 @@ namespace swr
             return frameHeight;
         }
 
+        // Resize internal frame buffers (in pixels)
+        void resize( size_t width, size_t height );
+
         // Презентация отрендеренного кадра
         void present( SDL_Renderer *renderer, SDL_Texture *texture );
 
@@ -210,6 +215,8 @@ namespace swr
         void drawIndexed( size_t indexCount, size_t startIndexLocation, size_t baseVertexLocation );
 
       private:
+        // Внутренний метод растеризации одного треугольника (после VS)
+        void rasterizeTri( const VSOutput &v0, const VSOutput &v1, const VSOutput &v2 );
         // Приватный конструктор: инициализация внутренних буферов, без shared_from_this()
         Device( size_t width, size_t height )
             : iaStage( std::shared_ptr<Device>() ), vsStage( std::shared_ptr<Device>() ),
