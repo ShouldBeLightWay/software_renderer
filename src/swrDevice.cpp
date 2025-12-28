@@ -83,7 +83,7 @@ namespace swr
             if( elem.semantic == semantic )
             {
                 const float *ptr = reinterpret_cast<const float *>( data + elem.offset );
-                return glm::vec2( ptr[index * 2], ptr[index * 2 + 1] );
+                return glm::vec2( ptr[0], ptr[1] );
             }
         }
         return glm::vec2( 0.0f );
@@ -97,7 +97,7 @@ namespace swr
             if( elem.semantic == semantic )
             {
                 const float *ptr = reinterpret_cast<const float *>( data + elem.offset );
-                return glm::vec3( ptr[index * 3], ptr[index * 3 + 1], ptr[index * 3 + 2] );
+                return glm::vec3( ptr[0], ptr[1], ptr[2] );
             }
         }
         return glm::vec3( 0.0f );
@@ -111,7 +111,7 @@ namespace swr
             if( elem.semantic == semantic )
             {
                 const float *ptr = reinterpret_cast<const float *>( data + elem.offset );
-                return glm::vec4( ptr[index * 4], ptr[index * 4 + 1], ptr[index * 4 + 2], ptr[index * 4 + 3] );
+                return glm::vec4( ptr[0], ptr[1], ptr[2], ptr[3] );
             }
         }
         return glm::vec4( 0.0f );
