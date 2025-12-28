@@ -27,6 +27,7 @@ class TriangleScene : public IScene
     float angle = 0.0f;        // radians
     float angularSpeed = 1.0f; // radians per second
 
-    std::vector<swr::Vertex> vertices;
     std::shared_ptr<swr::Buffer> vb;
+    std::shared_ptr<swr::Buffer> constantBuffer;
+    std::shared_ptr<swr::InputLayout> inputLayout;
 };
