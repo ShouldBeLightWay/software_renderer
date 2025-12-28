@@ -38,8 +38,118 @@ namespace swr
         float depth;           // Глубина пикселя
     };
 
-    using VertexShader = std::function<VSOutput( const Vertex & )>;
-    using PixelShader = std::function<glm::vec4( const PSInput & )>;
+    // Input layout semantics
+    enum class Semantic
+    {
+        POSITION0,
+        COLOR0,
+        TEXCOORD0,
+        NORMAL0,
+        // Can extend with more semantics as needed
+    };
+
+    // Input element formats
+    enum class InputFormat
+    {
+        R32_FLOAT,        // 1 float
+        R32G32_FLOAT,     // 2 floats (vec2)
+        R32G32B32_FLOAT,  // 3 floats (vec3)
+        R32G32B32A32_FLOAT, // 4 floats (vec4)
+    };
+
+    // Description of a single input element
+    struct InputElementDesc
+    {
+        Semantic semantic;
+        InputFormat format;
+        size_t offset; // Offset in bytes from start of vertex
+    };
+
+    // Description of the input layout (array of elements)
+    struct InputLayoutDesc
+    {
+        std::vector<InputElementDesc> elements;
+        size_t stride; // Total size of one vertex in bytes
+    };
+
+    // Forward declare for use in VertexInputView
+    class InputLayout;
+    class ShaderContext;
+
+    // View of vertex input data - provides semantic-based access to vertex attributes
+    class VertexInputView
+    {
+      public:
+        VertexInputView( const uint8_t *vertexData, const InputLayout *layout ) 
+            : data( vertexData ), layout( layout )
+        {
+        }
+
+        float readFloat1( Semantic semantic, size_t index = 0 ) const;
+        glm::vec2 readFloat2( Semantic semantic, size_t index = 0 ) const;
+        glm::vec3 readFloat3( Semantic semantic, size_t index = 0 ) const;
+        glm::vec4 readFloat4( Semantic semantic, size_t index = 0 ) const;
+
+      private:
+        const uint8_t *data;
+        const InputLayout *layout;
+    };
+
+    // Input layout - stores the description of how to interpret vertex data
+    class InputLayout
+    {
+      public:
+        explicit InputLayout( const InputLayoutDesc &desc ) : desc_( desc )
+        {
+        }
+
+        const InputLayoutDesc &desc() const
+        {
+            return desc_;
+        }
+
+        size_t stride() const
+        {
+            return desc_.stride;
+        }
+
+      private:
+        InputLayoutDesc desc_;
+    };
+
+    // Shader context - provides access to constant buffers
+    class ShaderContext
+    {
+      public:
+        ShaderContext( const std::vector<std::shared_ptr<Buffer>> &vsBuffers,
+                       const std::vector<std::shared_ptr<Buffer>> &psBuffers )
+            : vsConstantBuffers( vsBuffers ), psConstantBuffers( psBuffers )
+        {
+        }
+
+        template <typename T>
+        const T *vsCB( size_t slot ) const
+        {
+            if( slot >= vsConstantBuffers.size() || !vsConstantBuffers[slot] )
+                return nullptr;
+            return static_cast<const T *>( vsConstantBuffers[slot]->data() );
+        }
+
+        template <typename T>
+        const T *psCB( size_t slot ) const
+        {
+            if( slot >= psConstantBuffers.size() || !psConstantBuffers[slot] )
+                return nullptr;
+            return static_cast<const T *>( psConstantBuffers[slot]->data() );
+        }
+
+      private:
+        const std::vector<std::shared_ptr<Buffer>> &vsConstantBuffers;
+        const std::vector<std::shared_ptr<Buffer>> &psConstantBuffers;
+    };
+
+    using VertexShader = std::function<VSOutput( const VertexInputView &, const ShaderContext & )>;
+    using PixelShader = std::function<glm::vec4( const PSInput &, const ShaderContext & )>;
 
     // Перечисление топологий примитивов
     enum class PrimitiveTopology
@@ -88,6 +198,7 @@ namespace swr
             void setVertexBuffer( std::shared_ptr<Buffer> buffer );
             void setIndexBuffer( std::shared_ptr<Buffer> buffer );
             void setPrimitiveTopology( PrimitiveTopology topology );
+            void setInputLayout( std::shared_ptr<InputLayout> layout );
 
           private:
             friend class Device;
@@ -97,6 +208,7 @@ namespace swr
             std::weak_ptr<Device> parentDevice;
             std::shared_ptr<Buffer> vertexBuffer;
             std::shared_ptr<Buffer> indexBuffer;
+            std::shared_ptr<InputLayout> inputLayout;
             PrimitiveTopology primitiveTopology;
         };
 
@@ -105,14 +217,16 @@ namespace swr
         {
           public:
             void setVertexShader( VertexShader shader );
+            void setConstantBuffer( size_t slot, std::shared_ptr<Buffer> buffer );
 
           private:
             friend class Device;
-            VSStage( std::shared_ptr<Device> device ) : parentDevice( device )
+            VSStage( std::shared_ptr<Device> device ) : parentDevice( device ), constantBuffers( 8 )
             {
             }
             std::weak_ptr<Device> parentDevice;
             VertexShader vertexShader;
+            std::vector<std::shared_ptr<Buffer>> constantBuffers;
         };
 
         // RS (Rasterizer) stage
@@ -140,14 +254,16 @@ namespace swr
         {
           public:
             void setPixelShader( PixelShader shader );
+            void setConstantBuffer( size_t slot, std::shared_ptr<Buffer> buffer );
 
           private:
             friend class Device;
-            PSStage( std::shared_ptr<Device> device ) : parentDevice( device )
+            PSStage( std::shared_ptr<Device> device ) : parentDevice( device ), constantBuffers( 8 )
             {
             }
             std::weak_ptr<Device> parentDevice;
             PixelShader pixelShader;
+            std::vector<std::shared_ptr<Buffer>> constantBuffers;
         };
 
         // OM Output Merger stage
@@ -194,6 +310,9 @@ namespace swr
         // Создание буфера (управляется shared_ptr с кастомным делетером)
         std::shared_ptr<Buffer> createBuffer( size_t elementSize, size_t elementCount, BufferFormat format );
 
+        // Создание input layout
+        std::shared_ptr<InputLayout> createInputLayout( const InputLayoutDesc &desc );
+
         size_t deviceFrameWidth() const
         {
             return frameWidth;
@@ -216,7 +335,7 @@ namespace swr
 
       private:
         // Внутренний метод растеризации одного треугольника (после VS)
-        void rasterizeTri( const VSOutput &v0, const VSOutput &v1, const VSOutput &v2 );
+        void rasterizeTri( const VSOutput &v0, const VSOutput &v1, const VSOutput &v2, const ShaderContext &ctx );
         // Приватный конструктор: инициализация внутренних буферов, без shared_from_this()
         Device( size_t width, size_t height )
             : iaStage( std::shared_ptr<Device>() ), vsStage( std::shared_ptr<Device>() ),
