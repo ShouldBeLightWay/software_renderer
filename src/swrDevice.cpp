@@ -75,7 +75,7 @@ namespace swr
         return 0.0f;
     }
 
-    glm::vec2 VertexInputView::readFloat2( Semantic semantic, size_t index ) const
+    glm::vec2 VertexInputView::readFloat2( Semantic semantic ) const
     {
         const auto &desc = layout->desc();
         for( const auto &elem : desc.elements )
@@ -89,7 +89,7 @@ namespace swr
         return glm::vec2( 0.0f );
     }
 
-    glm::vec3 VertexInputView::readFloat3( Semantic semantic, size_t index ) const
+    glm::vec3 VertexInputView::readFloat3( Semantic semantic ) const
     {
         const auto &desc = layout->desc();
         for( const auto &elem : desc.elements )
@@ -103,7 +103,7 @@ namespace swr
         return glm::vec3( 0.0f );
     }
 
-    glm::vec4 VertexInputView::readFloat4( Semantic semantic, size_t index ) const
+    glm::vec4 VertexInputView::readFloat4( Semantic semantic ) const
     {
         const auto &desc = layout->desc();
         for( const auto &elem : desc.elements )
