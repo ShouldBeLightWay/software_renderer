@@ -55,6 +55,68 @@ namespace swr
         return std::shared_ptr<Buffer>( raw, std::move( deleter ) );
     }
 
+    std::shared_ptr<InputLayout> Device::createInputLayout( const InputLayoutDesc &desc )
+    {
+        return std::make_shared<InputLayout>( desc );
+    }
+
+    // VertexInputView implementations
+    float VertexInputView::readFloat1( Semantic semantic, size_t index ) const
+    {
+        const auto &desc = layout->desc();
+        for( const auto &elem : desc.elements )
+        {
+            if( elem.semantic == semantic )
+            {
+                const float *ptr = reinterpret_cast<const float *>( data + elem.offset );
+                return ptr[index];
+            }
+        }
+        return 0.0f;
+    }
+
+    glm::vec2 VertexInputView::readFloat2( Semantic semantic ) const
+    {
+        const auto &desc = layout->desc();
+        for( const auto &elem : desc.elements )
+        {
+            if( elem.semantic == semantic )
+            {
+                const float *ptr = reinterpret_cast<const float *>( data + elem.offset );
+                return glm::vec2( ptr[0], ptr[1] );
+            }
+        }
+        return glm::vec2( 0.0f );
+    }
+
+    glm::vec3 VertexInputView::readFloat3( Semantic semantic ) const
+    {
+        const auto &desc = layout->desc();
+        for( const auto &elem : desc.elements )
+        {
+            if( elem.semantic == semantic )
+            {
+                const float *ptr = reinterpret_cast<const float *>( data + elem.offset );
+                return glm::vec3( ptr[0], ptr[1], ptr[2] );
+            }
+        }
+        return glm::vec3( 0.0f );
+    }
+
+    glm::vec4 VertexInputView::readFloat4( Semantic semantic ) const
+    {
+        const auto &desc = layout->desc();
+        for( const auto &elem : desc.elements )
+        {
+            if( elem.semantic == semantic )
+            {
+                const float *ptr = reinterpret_cast<const float *>( data + elem.offset );
+                return glm::vec4( ptr[0], ptr[1], ptr[2], ptr[3] );
+            }
+        }
+        return glm::vec4( 0.0f );
+    }
+
     void Device::resize( size_t width, size_t height )
     {
         if( width == 0 || height == 0 )
@@ -162,24 +224,36 @@ namespace swr
             assert( false && "No vertex buffer set" );
             return;
         }
+        auto layout = iaStage.inputLayout;
+        if( !layout )
+        {
+            assert( false && "No input layout set" );
+            return;
+        }
+        if( !vsStage.vertexShader )
+        {
+            assert( false && "No vertex shader set" );
+            return;
+        }
 
-        const Vertex *vertices = static_cast<const Vertex *>( vb->data() );
-        size_t vertexSize = vb->elementSize();
+        const uint8_t *vertexData = static_cast<const uint8_t *>( vb->data() );
+        size_t stride = layout->stride();
 
         // VS - трансформируем вершины прогоняя их через шейдер
         std::vector<VSOutput> vsOut( vertexCount );
+        ShaderContext ctx( vsStage.constantBuffers, psStage.constantBuffers );
 
         for( size_t i = 0; i < vertexCount; ++i )
         {
-            const Vertex &inVertex = *reinterpret_cast<const Vertex *>( reinterpret_cast<const uint8_t *>( vertices ) +
-                                                                        ( startVertexLocation + i ) * vertexSize );
-            vsOut[i] = vsStage.vertexShader( inVertex );
+            const uint8_t *vertexBytes = vertexData + ( startVertexLocation + i ) * stride;
+            VertexInputView inputView( vertexBytes, layout.get() );
+            vsOut[i] = vsStage.vertexShader( inputView, ctx );
         }
 
         // Primitive assembly: triangle list, растеризация каждого треугольника
         for( size_t i = 0; i + 2 < vertexCount; i += 3 )
         {
-            rasterizeTri( vsOut[i], vsOut[i + 1], vsOut[i + 2] );
+            rasterizeTri( vsOut[i], vsOut[i + 1], vsOut[i + 2], ctx );
         }
     }
 
@@ -198,6 +272,17 @@ namespace swr
             assert( false && "Vertex or Index buffer not set" );
             return;
         }
+        auto layout = iaStage.inputLayout;
+        if( !layout )
+        {
+            assert( false && "No input layout set" );
+            return;
+        }
+        if( !vsStage.vertexShader )
+        {
+            assert( false && "No vertex shader set" );
+            return;
+        }
 
         // Поддерживаем форматы индексов R16_UINT и R32_UINT
         BufferFormat idxFmt = ib->format();
@@ -210,8 +295,9 @@ namespace swr
         }
 
         const uint8_t *idxBytes = static_cast<const uint8_t *>( ib->data() );
-        const Vertex *vertices = static_cast<const Vertex *>( vb->data() );
-        size_t vertexSize = vb->elementSize();
+        const uint8_t *vertexData = static_cast<const uint8_t *>( vb->data() );
+        size_t stride = layout->stride();
+        ShaderContext ctx( vsStage.constantBuffers, psStage.constantBuffers );
 
         // Идём по тройкам индексов
         for( size_t i = 0; i + 2 < indexCount; i += 3 )
@@ -235,22 +321,23 @@ namespace swr
             uint32_t i2 = readIndex( i + 2 ) + static_cast<uint32_t>( baseVertexLocation );
 
             // Выполняем VS для каждой вершины (при желании можно закэшировать)
-            const Vertex &vIn0 = *reinterpret_cast<const Vertex *>( reinterpret_cast<const uint8_t *>( vertices ) +
-                                                                    static_cast<size_t>( i0 ) * vertexSize );
-            const Vertex &vIn1 = *reinterpret_cast<const Vertex *>( reinterpret_cast<const uint8_t *>( vertices ) +
-                                                                    static_cast<size_t>( i1 ) * vertexSize );
-            const Vertex &vIn2 = *reinterpret_cast<const Vertex *>( reinterpret_cast<const uint8_t *>( vertices ) +
-                                                                    static_cast<size_t>( i2 ) * vertexSize );
+            const uint8_t *vBytes0 = vertexData + static_cast<size_t>( i0 ) * stride;
+            const uint8_t *vBytes1 = vertexData + static_cast<size_t>( i1 ) * stride;
+            const uint8_t *vBytes2 = vertexData + static_cast<size_t>( i2 ) * stride;
 
-            VSOutput o0 = vsStage.vertexShader( vIn0 );
-            VSOutput o1 = vsStage.vertexShader( vIn1 );
-            VSOutput o2 = vsStage.vertexShader( vIn2 );
+            VertexInputView view0( vBytes0, layout.get() );
+            VertexInputView view1( vBytes1, layout.get() );
+            VertexInputView view2( vBytes2, layout.get() );
 
-            rasterizeTri( o0, o1, o2 );
+            VSOutput o0 = vsStage.vertexShader( view0, ctx );
+            VSOutput o1 = vsStage.vertexShader( view1, ctx );
+            VSOutput o2 = vsStage.vertexShader( view2, ctx );
+
+            rasterizeTri( o0, o1, o2, ctx );
         }
     }
 
-    void Device::rasterizeTri( const VSOutput &v0, const VSOutput &v1, const VSOutput &v2 )
+    void Device::rasterizeTri( const VSOutput &v0, const VSOutput &v1, const VSOutput &v2, const ShaderContext &ctx )
     {
         // Получаем viewport (если не задан, используем весь кадр)
         Viewport vp{ 0, 0, static_cast<int>( frameWidth ), static_cast<int>( frameHeight ), 0.0f, 1.0f };
@@ -357,7 +444,7 @@ namespace swr
                         psIn.barycentric = glm::vec3( w0, w1, w2 );
                         psIn.depth = depth;
 
-                        glm::vec4 outColor = psStage.pixelShader( psIn );
+                        glm::vec4 outColor = psStage.pixelShader( psIn, ctx );
 
                         // Запись в буферы
                         frameBuffers.colorBuffer[fbIndex] = outColor;
@@ -381,11 +468,21 @@ namespace swr
     {
         primitiveTopology = topology;
     }
+    void Device::IAStage::setInputLayout( std::shared_ptr<InputLayout> layout )
+    {
+        inputLayout = std::move( layout );
+    }
 
     // VSStage
     void Device::VSStage::setVertexShader( VertexShader shader )
     {
         vertexShader = std::move( shader );
+    }
+    void Device::VSStage::setConstantBuffer( size_t slot, std::shared_ptr<Buffer> buffer )
+    {
+        if( slot >= constantBuffers.size() )
+            constantBuffers.resize( slot + 1 );
+        constantBuffers[slot] = std::move( buffer );
     }
 
     // RSStage
@@ -406,6 +503,12 @@ namespace swr
     void Device::PSStage::setPixelShader( PixelShader shader )
     {
         pixelShader = std::move( shader );
+    }
+    void Device::PSStage::setConstantBuffer( size_t slot, std::shared_ptr<Buffer> buffer )
+    {
+        if( slot >= constantBuffers.size() )
+            constantBuffers.resize( slot + 1 );
+        constantBuffers[slot] = std::move( buffer );
     }
 
     // OMStage
