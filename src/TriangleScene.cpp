@@ -1,6 +1,7 @@
 #include "TriangleScene.h"
 
 #include <algorithm>
+#include <cmath>
 #include <iostream>
 
 #include "swrDevice.h"
