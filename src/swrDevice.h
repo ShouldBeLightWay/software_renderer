@@ -10,11 +10,6 @@
 
 #include <glm/glm.hpp>
 
-// SDL3 forward decl что бы не тащить SDL3 сюда
-struct SDL_Window;
-struct SDL_Renderer;
-struct SDL_Texture;
-
 #include "swrBuffer.h"
 
 namespace swr
@@ -203,8 +198,10 @@ namespace swr
     class Device : public std::enable_shared_from_this<Device>
     {
       public:
+        using PresentCallback = std::function<void( const std::vector<glm::vec4> &, size_t, size_t )>;
+
         // Создание устройства только через фабрику
-        static std::shared_ptr<Device> create( size_t width, size_t height );
+        static std::shared_ptr<Device> create( size_t width, size_t height, PresentCallback presentCallback );
 
         ~Device();
         Device( const Device & ) = delete;
@@ -347,7 +344,7 @@ namespace swr
         void resize( size_t width, size_t height );
 
         // Презентация отрендеренного кадра
-        void present( SDL_Renderer *renderer, SDL_Texture *texture );
+        void present();
 
         // Управление рендерингом кадра
         void clear();
@@ -360,10 +357,11 @@ namespace swr
         void rasterizeLine( const VSOutput &v0, const VSOutput &v1, const ShaderContext &ctx );
         void rasterizeTriangle( const VSOutput &v0, const VSOutput &v1, const VSOutput &v2, const ShaderContext &ctx );
         // Приватный конструктор: инициализация внутренних буферов, без shared_from_this()
-        Device( size_t width, size_t height )
+        Device( size_t width, size_t height, PresentCallback presentCallback )
             : iaStage( std::shared_ptr<Device>() ), vsStage( std::shared_ptr<Device>() ),
               rsStage( std::shared_ptr<Device>() ), psStage( std::shared_ptr<Device>() ),
-              omStage( std::shared_ptr<Device>() ), frameWidth( width ), frameHeight( height )
+              omStage( std::shared_ptr<Device>() ), presentCallback( std::move( presentCallback ) ),
+              frameWidth( width ), frameHeight( height )
         {
             frameBuffers.colorBuffer.resize( width * height, glm::vec4( 0.0f ) );
             frameBuffers.depthBuffer.resize( width * height, 1.0f );
@@ -391,6 +389,7 @@ namespace swr
         };
 
         InternalFrameBuffers frameBuffers;
+        PresentCallback presentCallback;
         size_t frameWidth;
         size_t frameHeight;
     };

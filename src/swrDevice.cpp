@@ -1,8 +1,6 @@
 #include <assert.h>
-#include <iostream>
 
 #include "swrDevice.h"
-#include <SDL3/SDL.h>
 
 namespace
 {
@@ -129,36 +127,17 @@ namespace
         assemblePrimitives( topology, indexCount, fetchVertex, std::forward<EmitPrimitiveFn>( emitPrimitive ) );
     }
 
-    struct TextureLock
-    {
-        SDL_Texture *tex{ nullptr };
-        void *pixels{ nullptr };
-        int pitch{ 0 };
-        bool ok{ false };
-
-        explicit TextureLock( SDL_Texture *t, const SDL_Rect *rect = nullptr ) : tex( t )
-        {
-            ok = SDL_LockTexture( tex, rect, &pixels, &pitch );
-        }
-
-        ~TextureLock()
-        {
-            if( ok )
-                SDL_UnlockTexture( tex );
-        }
-
-        TextureLock( const TextureLock & ) = delete;
-        TextureLock &operator=( const TextureLock & ) = delete;
-    };
 } // unnamed namespace
 
 namespace swr
 {
 
-    std::shared_ptr<Device> Device::create( size_t width, size_t height )
+    std::shared_ptr<Device> Device::create( size_t width, size_t height, PresentCallback presentCallback )
     {
         // Создаём shared_ptr<Device>, затем инициализируем стадии
-        auto dev = std::shared_ptr<Device>( new Device( width, height ) );
+        assert( presentCallback && "Present callback must be provided" );
+
+        auto dev = std::shared_ptr<Device>( new Device( width, height, std::move( presentCallback ) ) );
         dev->initStages( dev );
         return dev;
     }
@@ -250,73 +229,12 @@ namespace swr
         frameBuffers.depthBuffer.assign( width * height, omStage.depthClearValue() );
     }
 
-    // Заглушки стадий (интерфейсные методы) — реализации по мере развития
-    void Device::present( SDL_Renderer *renderer, SDL_Texture *texture )
+    void Device::present()
     {
-        /*
-        Нужно:
-
-        SDL_LockTexture
-
-        Скопировать glm::vec4 → RGBA8
-
-        SDL_UnlockTexture
-
-        SDL_RenderTexture
-
-        SDL_RenderPresent
-        */
-        assert( renderer != nullptr );
-        assert( texture != nullptr );
         assert( frameWidth * frameHeight == frameBuffers.colorBuffer.size() );
+        assert( presentCallback && "Present callback must be set" );
 
-        static const SDL_PixelFormatDetails *pf = SDL_GetPixelFormatDetails( SDL_PIXELFORMAT_RGBA8888 );
-        auto vec4ColorToRGBA8 = []( const glm::vec4 &color, const SDL_PixelFormatDetails *pfmt ) -> std::uint32_t {
-            std::uint32_t r = static_cast<std::uint32_t>( glm::clamp( color.r, 0.0f, 1.0f ) * 255.0f );
-            std::uint32_t g = static_cast<std::uint32_t>( glm::clamp( color.g, 0.0f, 1.0f ) * 255.0f );
-            std::uint32_t b = static_cast<std::uint32_t>( glm::clamp( color.b, 0.0f, 1.0f ) * 255.0f );
-            std::uint32_t a = static_cast<std::uint32_t>( glm::clamp( color.a, 0.0f, 1.0f ) * 255.0f );
-            // Pack using masks/shifts from pixel format details
-            return ( ( r << pfmt->Rshift ) & pfmt->Rmask ) | ( ( g << pfmt->Gshift ) & pfmt->Gmask ) |
-                   ( ( b << pfmt->Bshift ) & pfmt->Bmask ) | ( ( a << pfmt->Ashift ) & pfmt->Amask );
-        };
-
-        size_t width = frameWidth;
-        size_t height = frameHeight;
-        // Обновление текстуры через Lock/Unlock без доп. аллокаций
-        {
-            TextureLock lock( texture );
-            if( !lock.ok )
-            {
-                std::cerr << "SDL_LockTexture failed: " << SDL_GetError() << std::endl;
-                return;
-            }
-            assert( lock.pixels != nullptr );
-            assert( lock.pitch >= static_cast<int>( width ) * 4 );
-
-            // Пишем построчно с учётом pitch
-            auto *row = static_cast<std::uint8_t *>( lock.pixels );
-            for( size_t y = 0; y < height; ++y )
-            {
-                auto *dst32 = reinterpret_cast<std::uint32_t *>( row );
-                const size_t base = y * width;
-                for( size_t x = 0; x < width; ++x )
-                {
-                    dst32[x] = vec4ColorToRGBA8( frameBuffers.colorBuffer[base + x], pf );
-                }
-                row += lock.pitch;
-            }
-            // lock выходит из области видимости здесь и вызывает SDL_UnlockTexture
-        }
-
-        // Сброс вьюпорта/масштаба и явное очищение фона в чёрный
-        SDL_SetRenderViewport( renderer, nullptr );
-        SDL_SetRenderScale( renderer, 1.0f, 1.0f );
-        SDL_SetRenderDrawColor( renderer, 0, 0, 0, 255 );
-        SDL_RenderClear( renderer );
-        SDL_FRect dst{ 0.0f, 0.0f, static_cast<float>( width ), static_cast<float>( height ) };
-        SDL_RenderTexture( renderer, texture, nullptr, &dst );
-        SDL_RenderPresent( renderer );
+        presentCallback( frameBuffers.colorBuffer, frameWidth, frameHeight );
     }
 
     void Device::clear()
