@@ -6,35 +6,21 @@
 
 namespace
 {
-    enum class PrimitiveKind
-    {
-        Point,
-        Line,
-        Triangle,
-    };
-
-    struct AssembledPrimitive
-    {
-        PrimitiveKind kind{ PrimitiveKind::Point };
-        size_t vertexCount{ 0 };
-        std::array<swr::VSOutput, 3> vertices{};
-    };
-
     template<typename FetchVertexFn, typename EmitPrimitiveFn>
     void assemblePrimitives( swr::PrimitiveTopology topology, size_t vertexCount, FetchVertexFn &&fetchVertex,
                              EmitPrimitiveFn &&emitPrimitive )
     {
         auto emitPoint = [&]( size_t i0 ) {
-            AssembledPrimitive primitive;
-            primitive.kind = PrimitiveKind::Point;
+            swr::AssembledPrimitive primitive;
+            primitive.kind = swr::PrimitiveKind::Point;
             primitive.vertexCount = 1;
             primitive.vertices[0] = fetchVertex( i0 );
             emitPrimitive( primitive );
         };
 
         auto emitLine = [&]( size_t i0, size_t i1 ) {
-            AssembledPrimitive primitive;
-            primitive.kind = PrimitiveKind::Line;
+            swr::AssembledPrimitive primitive;
+            primitive.kind = swr::PrimitiveKind::Line;
             primitive.vertexCount = 2;
             primitive.vertices[0] = fetchVertex( i0 );
             primitive.vertices[1] = fetchVertex( i1 );
@@ -42,8 +28,8 @@ namespace
         };
 
         auto emitTriangle = [&]( size_t i0, size_t i1, size_t i2 ) {
-            AssembledPrimitive primitive;
-            primitive.kind = PrimitiveKind::Triangle;
+            swr::AssembledPrimitive primitive;
+            primitive.kind = swr::PrimitiveKind::Triangle;
             primitive.vertexCount = 3;
             primitive.vertices[0] = fetchVertex( i0 );
             primitive.vertices[1] = fetchVertex( i1 );
@@ -369,23 +355,8 @@ namespace swr
 
         emitNonIndexedPrimitives(
             vertexData, stride, startVertexLocation, vertexCount, layout.get(), ctx, vsStage.vertexShader,
-            iaStage.primitiveTopology, [&]( const AssembledPrimitive &primitive ) {
-                switch( primitive.kind )
-                {
-                case PrimitiveKind::Triangle:
-                    rasterizeTri( primitive.vertices[0], primitive.vertices[1], primitive.vertices[2], ctx );
-                    break;
-
-                case PrimitiveKind::Point:
-                case PrimitiveKind::Line:
-                    assert( false && "Rasterization for this primitive kind is not implemented yet" );
-                    break;
-
-                default:
-                    assert( false && "Unsupported primitive kind" );
-                    break;
-                }
-            } );
+            iaStage.primitiveTopology,
+            [&]( const AssembledPrimitive &primitive ) { rasterizePrimitive( primitive, ctx ); } );
     }
 
     void Device::drawIndexed( size_t indexCount, size_t startIndexLocation, size_t baseVertexLocation )
@@ -424,29 +395,128 @@ namespace swr
         size_t stride = layout->stride();
         ShaderContext ctx( vsStage.constantBuffers, psStage.constantBuffers );
 
-        emitIndexedPrimitives(
-            idxBytes, idxFmt, idxElemSize, vertexData, stride, startIndexLocation, indexCount, baseVertexLocation,
-            layout.get(), ctx, vsStage.vertexShader, iaStage.primitiveTopology,
-            [&]( const AssembledPrimitive &primitive ) {
-                switch( primitive.kind )
-                {
-                case PrimitiveKind::Triangle:
-                    rasterizeTri( primitive.vertices[0], primitive.vertices[1], primitive.vertices[2], ctx );
-                    break;
-
-                case PrimitiveKind::Point:
-                case PrimitiveKind::Line:
-                    assert( false && "Rasterization for this primitive kind is not implemented yet" );
-                    break;
-
-                default:
-                    assert( false && "Unsupported primitive kind" );
-                    break;
-                }
-            } );
+        emitIndexedPrimitives( idxBytes, idxFmt, idxElemSize, vertexData, stride, startIndexLocation, indexCount,
+                               baseVertexLocation, layout.get(), ctx, vsStage.vertexShader, iaStage.primitiveTopology,
+                               [&]( const AssembledPrimitive &primitive ) { rasterizePrimitive( primitive, ctx ); } );
     }
 
-    void Device::rasterizeTri( const VSOutput &v0, const VSOutput &v1, const VSOutput &v2, const ShaderContext &ctx )
+    void Device::rasterizePrimitive( const AssembledPrimitive &primitive, const ShaderContext &ctx )
+    {
+        switch( primitive.kind )
+        {
+        case PrimitiveKind::Point:
+            rasterizePoint( primitive.vertices[0], ctx );
+            break;
+
+        case PrimitiveKind::Line:
+            rasterizeLine( primitive.vertices[0], primitive.vertices[1], ctx );
+            break;
+
+        case PrimitiveKind::Triangle:
+            rasterizeTriangle( primitive.vertices[0], primitive.vertices[1], primitive.vertices[2], ctx );
+            break;
+
+        default:
+            assert( false && "Unsupported primitive kind" );
+            break;
+        }
+    }
+
+    void Device::rasterizePoint( const VSOutput &vertex, const ShaderContext &ctx )
+    {
+        Viewport vp{ 0, 0, static_cast<int>( frameWidth ), static_cast<int>( frameHeight ), 0.0f, 1.0f };
+        if( rsStage.viewport.width > 0 && rsStage.viewport.height > 0 )
+            vp = rsStage.viewport;
+
+        glm::vec3 ndc = glm::vec3( vertex.position ) / vertex.position.w;
+        float sx = ( ndc.x * 0.5f + 0.5f ) * static_cast<float>( vp.width ) + static_cast<float>( vp.x );
+        float sy = ( 1.0f - ( ndc.y * 0.5f + 0.5f ) ) * static_cast<float>( vp.height ) + static_cast<float>( vp.y );
+
+        int pixelX = static_cast<int>( glm::floor( sx ) );
+        int pixelY = static_cast<int>( glm::floor( sy ) );
+        if( pixelX < vp.x || pixelX >= vp.x + vp.width || pixelY < vp.y || pixelY >= vp.y + vp.height )
+            return;
+
+        size_t fbIndex = static_cast<size_t>( pixelY ) * frameWidth + static_cast<size_t>( pixelX );
+        float depth = ndc.z;
+        if( depth >= frameBuffers.depthBuffer[fbIndex] )
+            return;
+
+        PSInput psIn;
+        psIn.color = vertex.color;
+        psIn.barycentric = glm::vec3( 1.0f, 0.0f, 0.0f );
+        psIn.depth = depth;
+
+        glm::vec4 outColor = psStage.pixelShader( psIn, ctx );
+        frameBuffers.colorBuffer[fbIndex] = outColor;
+        frameBuffers.depthBuffer[fbIndex] = depth;
+    }
+
+    void Device::rasterizeLine( const VSOutput &v0, const VSOutput &v1, const ShaderContext &ctx )
+    {
+        Viewport vp{ 0, 0, static_cast<int>( frameWidth ), static_cast<int>( frameHeight ), 0.0f, 1.0f };
+        if( rsStage.viewport.width > 0 && rsStage.viewport.height > 0 )
+            vp = rsStage.viewport;
+
+        auto p0 = glm::vec3( v0.position ) / v0.position.w;
+        auto p1 = glm::vec3( v1.position ) / v1.position.w;
+
+        auto ndcToViewport = [&]( const glm::vec3 &ndc ) {
+            float sx = ( ndc.x * 0.5f + 0.5f ) * static_cast<float>( vp.width ) + static_cast<float>( vp.x );
+            float sy =
+                ( 1.0f - ( ndc.y * 0.5f + 0.5f ) ) * static_cast<float>( vp.height ) + static_cast<float>( vp.y );
+            return glm::vec2( sx, sy );
+        };
+
+        glm::vec2 s0 = ndcToViewport( p0 );
+        glm::vec2 s1 = ndcToViewport( p1 );
+        glm::vec2 delta = s1 - s0;
+        int steps = static_cast<int>( glm::ceil( glm::max( glm::abs( delta.x ), glm::abs( delta.y ) ) ) );
+
+        if( steps == 0 )
+        {
+            rasterizePoint( v0, ctx );
+            return;
+        }
+
+        float invW0 = 1.0f / v0.position.w;
+        float invW1 = 1.0f / v1.position.w;
+
+        for( int step = 0; step <= steps; ++step )
+        {
+            float t = static_cast<float>( step ) / static_cast<float>( steps );
+            glm::vec2 samplePos = glm::mix( s0, s1, t );
+            int pixelX = static_cast<int>( glm::floor( samplePos.x ) );
+            int pixelY = static_cast<int>( glm::floor( samplePos.y ) );
+
+            if( pixelX < vp.x || pixelX >= vp.x + vp.width || pixelY < vp.y || pixelY >= vp.y + vp.height )
+                continue;
+
+            float w0 = 1.0f - t;
+            float w1 = t;
+            float denom = w0 * invW0 + w1 * invW1;
+            if( denom <= 0.0f )
+                continue;
+
+            float depth = ( w0 * p0.z * invW0 + w1 * p1.z * invW1 ) / denom;
+            size_t fbIndex = static_cast<size_t>( pixelY ) * frameWidth + static_cast<size_t>( pixelX );
+            if( depth >= frameBuffers.depthBuffer[fbIndex] )
+                continue;
+
+            PSInput psIn;
+            glm::vec3 colorNum = w0 * v0.color * invW0 + w1 * v1.color * invW1;
+            psIn.color = colorNum / denom;
+            psIn.barycentric = glm::vec3( w0, w1, 0.0f );
+            psIn.depth = depth;
+
+            glm::vec4 outColor = psStage.pixelShader( psIn, ctx );
+            frameBuffers.colorBuffer[fbIndex] = outColor;
+            frameBuffers.depthBuffer[fbIndex] = depth;
+        }
+    }
+
+    void Device::rasterizeTriangle( const VSOutput &v0, const VSOutput &v1, const VSOutput &v2,
+                                    const ShaderContext &ctx )
     {
         // Получаем viewport (если не задан, используем весь кадр)
         Viewport vp{ 0, 0, static_cast<int>( frameWidth ), static_cast<int>( frameHeight ), 0.0f, 1.0f };
