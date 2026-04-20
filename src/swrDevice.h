@@ -5,6 +5,7 @@
 #include <functional>
 #include <memory>
 
+#include <array>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -51,9 +52,9 @@ namespace swr
     // Input element formats
     enum class InputFormat
     {
-        R32_FLOAT,        // 1 float
-        R32G32_FLOAT,     // 2 floats (vec2)
-        R32G32B32_FLOAT,  // 3 floats (vec3)
+        R32_FLOAT,          // 1 float
+        R32G32_FLOAT,       // 2 floats (vec2)
+        R32G32B32_FLOAT,    // 3 floats (vec3)
         R32G32B32A32_FLOAT, // 4 floats (vec4)
     };
 
@@ -80,8 +81,7 @@ namespace swr
     class VertexInputView
     {
       public:
-        VertexInputView( const uint8_t *vertexData, const InputLayout *layout ) 
-            : data( vertexData ), layout( layout )
+        VertexInputView( const uint8_t *vertexData, const InputLayout *layout ) : data( vertexData ), layout( layout )
         {
         }
 
@@ -129,16 +129,14 @@ namespace swr
         {
         }
 
-        template <typename T>
-        const T *vsCB( size_t slot ) const
+        template<typename T> const T *vsCB( size_t slot ) const
         {
             if( slot >= vsConstantBuffers.size() || !vsConstantBuffers[slot] )
                 return nullptr;
             return static_cast<const T *>( vsConstantBuffers[slot]->data() );
         }
 
-        template <typename T>
-        const T *psCB( size_t slot ) const
+        template<typename T> const T *psCB( size_t slot ) const
         {
             if( slot >= psConstantBuffers.size() || !psConstantBuffers[slot] )
                 return nullptr;
@@ -156,8 +154,12 @@ namespace swr
     // Перечисление топологий примитивов
     enum class PrimitiveTopology
     {
+        PointList,
+        LineList,
+        LineStrip,
         TriangleList,
-        // В будущем можно добавить другие топологии
+        TriangleStrip,
+        TriangleFan,
     };
 
     // Перечислеение форматов буферов (в будущем)

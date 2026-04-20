@@ -6,6 +6,20 @@
 
 namespace
 {
+    enum class PrimitiveKind
+    {
+        Point,
+        Line,
+        Triangle,
+    };
+
+    struct AssembledPrimitive
+    {
+        PrimitiveKind kind{ PrimitiveKind::Point };
+        size_t vertexCount{ 0 };
+        std::array<swr::VSOutput, 3> vertices{};
+    };
+
     struct TextureLock
     {
         SDL_Texture *tex{ nullptr };
