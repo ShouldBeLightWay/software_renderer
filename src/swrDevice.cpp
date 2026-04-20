@@ -412,6 +412,7 @@ namespace swr
             rasterizeLine( primitive.vertices[0], primitive.vertices[1], ctx );
             break;
 
+
         case PrimitiveKind::Triangle:
             rasterizeTriangle( primitive.vertices[0], primitive.vertices[1], primitive.vertices[2], ctx );
             break;
