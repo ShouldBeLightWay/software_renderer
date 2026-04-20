@@ -6,6 +6,11 @@
 
 namespace
 {
+    static inline float clampLineWidth( float lineWidth )
+    {
+        return std::max( 0.5f, lineWidth );
+    }
+
     template<typename FetchVertexFn, typename EmitPrimitiveFn>
     void assemblePrimitives( swr::PrimitiveTopology topology, size_t vertexCount, FetchVertexFn &&fetchVertex,
                              EmitPrimitiveFn &&emitPrimitive )
@@ -412,7 +417,6 @@ namespace swr
             rasterizeLine( primitive.vertices[0], primitive.vertices[1], ctx );
             break;
 
-
         case PrimitiveKind::Triangle:
             rasterizeTriangle( primitive.vertices[0], primitive.vertices[1], primitive.vertices[2], ctx );
             break;
@@ -471,48 +475,63 @@ namespace swr
 
         glm::vec2 s0 = ndcToViewport( p0 );
         glm::vec2 s1 = ndcToViewport( p1 );
-        glm::vec2 delta = s1 - s0;
-        int steps = static_cast<int>( glm::ceil( glm::max( glm::abs( delta.x ), glm::abs( delta.y ) ) ) );
+        glm::vec2 segment = s1 - s0;
+        float segmentLen2 = glm::dot( segment, segment );
+        float halfWidth = clampLineWidth( rsStage.lineWidth ) * 0.5f;
 
-        if( steps == 0 )
+        if( segmentLen2 == 0.0f )
         {
             rasterizePoint( v0, ctx );
             return;
         }
 
+        int minX = static_cast<int>( glm::floor( glm::min( s0.x, s1.x ) - halfWidth ) );
+        int maxX = static_cast<int>( glm::ceil( glm::max( s0.x, s1.x ) + halfWidth ) );
+        int minY = static_cast<int>( glm::floor( glm::min( s0.y, s1.y ) - halfWidth ) );
+        int maxY = static_cast<int>( glm::ceil( glm::max( s0.y, s1.y ) + halfWidth ) );
+
+        minX = std::max( minX, vp.x );
+        minY = std::max( minY, vp.y );
+        maxX = std::min( maxX, vp.x + vp.width - 1 );
+        maxY = std::min( maxY, vp.y + vp.height - 1 );
+
         float invW0 = 1.0f / v0.position.w;
         float invW1 = 1.0f / v1.position.w;
 
-        for( int step = 0; step <= steps; ++step )
+        for( int y = minY; y <= maxY; ++y )
         {
-            float t = static_cast<float>( step ) / static_cast<float>( steps );
-            glm::vec2 samplePos = glm::mix( s0, s1, t );
-            int pixelX = static_cast<int>( glm::floor( samplePos.x ) );
-            int pixelY = static_cast<int>( glm::floor( samplePos.y ) );
+            for( int x = minX; x <= maxX; ++x )
+            {
+                glm::vec2 samplePos( static_cast<float>( x ) + 0.5f, static_cast<float>( y ) + 0.5f );
+                float t = glm::dot( samplePos - s0, segment ) / segmentLen2;
+                t = glm::clamp( t, 0.0f, 1.0f );
 
-            if( pixelX < vp.x || pixelX >= vp.x + vp.width || pixelY < vp.y || pixelY >= vp.y + vp.height )
-                continue;
+                glm::vec2 closestPoint = s0 + segment * t;
+                float dist2 = glm::dot( samplePos - closestPoint, samplePos - closestPoint );
+                if( dist2 > halfWidth * halfWidth )
+                    continue;
 
-            float w0 = 1.0f - t;
-            float w1 = t;
-            float denom = w0 * invW0 + w1 * invW1;
-            if( denom <= 0.0f )
-                continue;
+                float w0 = 1.0f - t;
+                float w1 = t;
+                float denom = w0 * invW0 + w1 * invW1;
+                if( denom <= 0.0f )
+                    continue;
 
-            float depth = ( w0 * p0.z * invW0 + w1 * p1.z * invW1 ) / denom;
-            size_t fbIndex = static_cast<size_t>( pixelY ) * frameWidth + static_cast<size_t>( pixelX );
-            if( depth >= frameBuffers.depthBuffer[fbIndex] )
-                continue;
+                float depth = ( w0 * p0.z * invW0 + w1 * p1.z * invW1 ) / denom;
+                size_t fbIndex = static_cast<size_t>( y ) * frameWidth + static_cast<size_t>( x );
+                if( depth >= frameBuffers.depthBuffer[fbIndex] )
+                    continue;
 
-            PSInput psIn;
-            glm::vec3 colorNum = w0 * v0.color * invW0 + w1 * v1.color * invW1;
-            psIn.color = colorNum / denom;
-            psIn.barycentric = glm::vec3( w0, w1, 0.0f );
-            psIn.depth = depth;
+                PSInput psIn;
+                glm::vec3 colorNum = w0 * v0.color * invW0 + w1 * v1.color * invW1;
+                psIn.color = colorNum / denom;
+                psIn.barycentric = glm::vec3( w0, w1, 0.0f );
+                psIn.depth = depth;
 
-            glm::vec4 outColor = psStage.pixelShader( psIn, ctx );
-            frameBuffers.colorBuffer[fbIndex] = outColor;
-            frameBuffers.depthBuffer[fbIndex] = depth;
+                glm::vec4 outColor = psStage.pixelShader( psIn, ctx );
+                frameBuffers.colorBuffer[fbIndex] = outColor;
+                frameBuffers.depthBuffer[fbIndex] = depth;
+            }
         }
     }
 
@@ -587,7 +606,7 @@ namespace swr
                 {
                     // Связь: |edgeFunction(e,p)| = |e| * distance(p, edge)
                     // Поэтому сравниваем с длиной ребра * допуск_в_пикселях
-                    const float epsPixels = 0.75f; // толщина линии ~1px
+                    const float epsPixels = clampLineWidth( rsStage.lineWidth ) * 0.5f;
                     float L0 = glm::length( s2 - s1 );
                     float L1 = glm::length( s0 - s2 );
                     float L2 = glm::length( s1 - s0 );
@@ -673,6 +692,10 @@ namespace swr
     void Device::RSStage::setCullBackface( bool cull )
     {
         cullBackface = cull;
+    }
+    void Device::RSStage::setLineWidth( float lw )
+    {
+        lineWidth = clampLineWidth( lw );
     }
     void Device::RSStage::setWireframe( bool wf )
     {

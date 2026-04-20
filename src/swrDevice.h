@@ -255,6 +255,7 @@ namespace swr
             // В будущем можно добавить настройки растеризации
             void setViewport( const Viewport &viewport );
             void setCullBackface( bool cull );
+            void setLineWidth( float lw );
             void setWireframe( bool wireframe );
 
           private:
@@ -265,6 +266,7 @@ namespace swr
             std::weak_ptr<Device> parentDevice;
             Viewport viewport;
             bool cullBackface = false;
+            float lineWidth = 1.0f;
             bool wireframe = false;
         };
 
