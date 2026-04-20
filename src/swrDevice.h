@@ -5,6 +5,7 @@
 #include <functional>
 #include <memory>
 
+#include <array>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -51,9 +52,9 @@ namespace swr
     // Input element formats
     enum class InputFormat
     {
-        R32_FLOAT,        // 1 float
-        R32G32_FLOAT,     // 2 floats (vec2)
-        R32G32B32_FLOAT,  // 3 floats (vec3)
+        R32_FLOAT,          // 1 float
+        R32G32_FLOAT,       // 2 floats (vec2)
+        R32G32B32_FLOAT,    // 3 floats (vec3)
         R32G32B32A32_FLOAT, // 4 floats (vec4)
     };
 
@@ -80,8 +81,7 @@ namespace swr
     class VertexInputView
     {
       public:
-        VertexInputView( const uint8_t *vertexData, const InputLayout *layout ) 
-            : data( vertexData ), layout( layout )
+        VertexInputView( const uint8_t *vertexData, const InputLayout *layout ) : data( vertexData ), layout( layout )
         {
         }
 
@@ -129,16 +129,14 @@ namespace swr
         {
         }
 
-        template <typename T>
-        const T *vsCB( size_t slot ) const
+        template<typename T> const T *vsCB( size_t slot ) const
         {
             if( slot >= vsConstantBuffers.size() || !vsConstantBuffers[slot] )
                 return nullptr;
             return static_cast<const T *>( vsConstantBuffers[slot]->data() );
         }
 
-        template <typename T>
-        const T *psCB( size_t slot ) const
+        template<typename T> const T *psCB( size_t slot ) const
         {
             if( slot >= psConstantBuffers.size() || !psConstantBuffers[slot] )
                 return nullptr;
@@ -153,11 +151,30 @@ namespace swr
     using VertexShader = std::function<VSOutput( const VertexInputView &, const ShaderContext & )>;
     using PixelShader = std::function<glm::vec4( const PSInput &, const ShaderContext & )>;
 
+    // Internal primitive model used between assembly and rasterization.
+    enum class PrimitiveKind
+    {
+        Point,
+        Line,
+        Triangle,
+    };
+
+    struct AssembledPrimitive
+    {
+        PrimitiveKind kind{ PrimitiveKind::Point };
+        size_t vertexCount{ 0 };
+        std::array<VSOutput, 3> vertices{};
+    };
+
     // Перечисление топологий примитивов
     enum class PrimitiveTopology
     {
+        PointList,
+        LineList,
+        LineStrip,
         TriangleList,
-        // В будущем можно добавить другие топологии
+        TriangleStrip,
+        TriangleFan,
     };
 
     // Перечислеение форматов буферов (в будущем)
@@ -336,8 +353,10 @@ namespace swr
         void drawIndexed( size_t indexCount, size_t startIndexLocation, size_t baseVertexLocation );
 
       private:
-        // Внутренний метод растеризации одного треугольника (после VS)
-        void rasterizeTri( const VSOutput &v0, const VSOutput &v1, const VSOutput &v2, const ShaderContext &ctx );
+        void rasterizePrimitive( const AssembledPrimitive &primitive, const ShaderContext &ctx );
+        void rasterizePoint( const VSOutput &vertex, const ShaderContext &ctx );
+        void rasterizeLine( const VSOutput &v0, const VSOutput &v1, const ShaderContext &ctx );
+        void rasterizeTriangle( const VSOutput &v0, const VSOutput &v1, const VSOutput &v2, const ShaderContext &ctx );
         // Приватный конструктор: инициализация внутренних буферов, без shared_from_this()
         Device( size_t width, size_t height )
             : iaStage( std::shared_ptr<Device>() ), vsStage( std::shared_ptr<Device>() ),
