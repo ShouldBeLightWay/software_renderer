@@ -26,6 +26,7 @@ class TriangleScene : public IScene
     bool animate = false;
     float angle = 0.0f;        // radians
     float angularSpeed = 1.0f; // radians per second
+    float lineWidth = 1.0f;
 
     std::shared_ptr<swr::Buffer> vb;
     std::shared_ptr<swr::Buffer> constantBuffer;

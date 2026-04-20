@@ -13,6 +13,7 @@ void PrimitiveTopologyScene::init()
 {
     device->OM().setClearColor( glm::vec4( 0.08f, 0.08f, 0.1f, 1.0f ) );
     device->RS().setCullBackface( false );
+    device->RS().setLineWidth( lineWidth );
     device->RS().setWireframe( false );
 
     auto makePointCloudPreset = []() {
@@ -121,7 +122,7 @@ void PrimitiveTopologyScene::init()
     setViewport( static_cast<int>( device->deviceFrameWidth() ), static_cast<int>( device->deviceFrameHeight() ) );
 
     std::cout << "PrimitiveTopology scene: 1 PointList, 2 LineList, 3 LineStrip, 4 TriangleStrip, 5 TriangleFan, Space "
-                 "next preset"
+                 "next preset, [/] line width"
               << std::endl;
 }
 
@@ -147,6 +148,28 @@ void PrimitiveTopologyScene::handleKeyEvent( SDL_KeyboardEvent &ke )
         applyPreset( 4 );
     else if( ke.key == SDLK_SPACE )
         applyPreset( ( currentPreset + 1 ) % presets.size() );
+    else if( ke.key == SDLK_LEFTBRACKET )
+    {
+        lineWidth = std::max( 0.5f, lineWidth - 0.5f );
+        device->RS().setLineWidth( lineWidth );
+        std::cout << "Line width: " << lineWidth;
+        if( presetUsesLineWidth( currentPreset ) )
+            std::cout << " px";
+        else
+            std::cout << " px (visible on LineList/LineStrip)";
+        std::cout << std::endl;
+    }
+    else if( ke.key == SDLK_RIGHTBRACKET )
+    {
+        lineWidth += 0.5f;
+        device->RS().setLineWidth( lineWidth );
+        std::cout << "Line width: " << lineWidth;
+        if( presetUsesLineWidth( currentPreset ) )
+            std::cout << " px";
+        else
+            std::cout << " px (visible on LineList/LineStrip)";
+        std::cout << std::endl;
+    }
 }
 
 void PrimitiveTopologyScene::onResize( int width, int height )
@@ -170,6 +193,16 @@ void PrimitiveTopologyScene::applyPreset( size_t presetIndex )
     vb->uploadData( preset.vertices.data(), preset.vertices.size() );
     drawVertexCount = preset.vertices.size();
     device->IA().setPrimitiveTopology( preset.topology );
+    device->RS().setLineWidth( lineWidth );
 
     std::cout << "Primitive topology: " << preset.name << ", vertices: " << drawVertexCount << std::endl;
+}
+
+bool PrimitiveTopologyScene::presetUsesLineWidth( size_t presetIndex ) const
+{
+    if( presetIndex >= presets.size() )
+        return false;
+
+    swr::PrimitiveTopology topology = presets[presetIndex].topology;
+    return topology == swr::PrimitiveTopology::LineList || topology == swr::PrimitiveTopology::LineStrip;
 }
