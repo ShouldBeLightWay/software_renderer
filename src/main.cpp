@@ -2,6 +2,7 @@
 #include <iostream>
 
 #include "IScene.h"
+#include "PrimitiveTopologyScene.h"
 #include "SceneManager.h"
 #include "TriangleScene.h"
 #include "swrDevice.h"
@@ -69,6 +70,9 @@ int main( int argc, char *argv[] )
 
     // Scene system setup
     SceneManager sceneManager;
+    sceneManager.registerScene( "Primitive Topology", []( std::shared_ptr<swr::Device> dev ) {
+        return std::make_unique<PrimitiveTopologyScene>( std::move( dev ) );
+    } );
     sceneManager.registerScene( "Triangle", []( std::shared_ptr<swr::Device> dev ) {
         return std::make_unique<TriangleScene>( std::move( dev ) );
     } );
