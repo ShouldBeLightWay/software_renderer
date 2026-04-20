@@ -6,6 +6,124 @@
 
 namespace
 {
+    template<typename FetchVertexFn, typename EmitPrimitiveFn>
+    void assemblePrimitives( swr::PrimitiveTopology topology, size_t vertexCount, FetchVertexFn &&fetchVertex,
+                             EmitPrimitiveFn &&emitPrimitive )
+    {
+        auto emitPoint = [&]( size_t i0 ) {
+            swr::AssembledPrimitive primitive;
+            primitive.kind = swr::PrimitiveKind::Point;
+            primitive.vertexCount = 1;
+            primitive.vertices[0] = fetchVertex( i0 );
+            emitPrimitive( primitive );
+        };
+
+        auto emitLine = [&]( size_t i0, size_t i1 ) {
+            swr::AssembledPrimitive primitive;
+            primitive.kind = swr::PrimitiveKind::Line;
+            primitive.vertexCount = 2;
+            primitive.vertices[0] = fetchVertex( i0 );
+            primitive.vertices[1] = fetchVertex( i1 );
+            emitPrimitive( primitive );
+        };
+
+        auto emitTriangle = [&]( size_t i0, size_t i1, size_t i2 ) {
+            swr::AssembledPrimitive primitive;
+            primitive.kind = swr::PrimitiveKind::Triangle;
+            primitive.vertexCount = 3;
+            primitive.vertices[0] = fetchVertex( i0 );
+            primitive.vertices[1] = fetchVertex( i1 );
+            primitive.vertices[2] = fetchVertex( i2 );
+            emitPrimitive( primitive );
+        };
+
+        switch( topology )
+        {
+        case swr::PrimitiveTopology::PointList:
+            for( size_t i = 0; i < vertexCount; ++i )
+                emitPoint( i );
+            break;
+
+        case swr::PrimitiveTopology::LineList:
+            for( size_t i = 0; i + 1 < vertexCount; i += 2 )
+                emitLine( i, i + 1 );
+            break;
+
+        case swr::PrimitiveTopology::LineStrip:
+            for( size_t i = 0; i + 1 < vertexCount; ++i )
+                emitLine( i, i + 1 );
+            break;
+
+        case swr::PrimitiveTopology::TriangleList:
+            for( size_t i = 0; i + 2 < vertexCount; i += 3 )
+                emitTriangle( i, i + 1, i + 2 );
+            break;
+
+        case swr::PrimitiveTopology::TriangleStrip:
+            for( size_t i = 0; i + 2 < vertexCount; ++i )
+            {
+                if( ( i & 1 ) == 0 )
+                    emitTriangle( i, i + 1, i + 2 );
+                else
+                    emitTriangle( i + 1, i, i + 2 );
+            }
+            break;
+
+        case swr::PrimitiveTopology::TriangleFan:
+            for( size_t i = 1; i + 1 < vertexCount; ++i )
+                emitTriangle( 0, i, i + 1 );
+            break;
+
+        default:
+            assert( false && "Unsupported primitive topology" );
+            break;
+        }
+    }
+
+    template<typename EmitPrimitiveFn>
+    void emitNonIndexedPrimitives( const std::uint8_t *vertexData, size_t stride, size_t startVertexLocation,
+                                   size_t vertexCount, const swr::InputLayout *layout, const swr::ShaderContext &ctx,
+                                   const swr::VertexShader &vertexShader, swr::PrimitiveTopology topology,
+                                   EmitPrimitiveFn &&emitPrimitive )
+    {
+        auto fetchVertex = [&]( size_t logicalIndex ) -> swr::VSOutput {
+            const uint8_t *vertexBytes = vertexData + ( startVertexLocation + logicalIndex ) * stride;
+            swr::VertexInputView inputView( vertexBytes, layout );
+            return vertexShader( inputView, ctx );
+        };
+
+        assemblePrimitives( topology, vertexCount, fetchVertex, std::forward<EmitPrimitiveFn>( emitPrimitive ) );
+    }
+
+    template<typename EmitPrimitiveFn>
+    void emitIndexedPrimitives( const std::uint8_t *idxBytes, swr::BufferFormat idxFmt, size_t idxElemSize,
+                                const std::uint8_t *vertexData, size_t stride, size_t startIndexLocation,
+                                size_t indexCount, size_t baseVertexLocation, const swr::InputLayout *layout,
+                                const swr::ShaderContext &ctx, const swr::VertexShader &vertexShader,
+                                swr::PrimitiveTopology topology, EmitPrimitiveFn &&emitPrimitive )
+    {
+        auto readIndex = [&]( size_t logicalIndex ) -> uint32_t {
+            size_t offset = ( startIndexLocation + logicalIndex ) * idxElemSize;
+            if( idxFmt == swr::BufferFormat::R16_UINT )
+            {
+                const uint16_t *p = reinterpret_cast<const uint16_t *>( idxBytes + offset );
+                return static_cast<uint32_t>( *p );
+            }
+
+            const uint32_t *p = reinterpret_cast<const uint32_t *>( idxBytes + offset );
+            return *p;
+        };
+
+        auto fetchVertex = [&]( size_t logicalIndex ) -> swr::VSOutput {
+            uint32_t vertexIndex = readIndex( logicalIndex ) + static_cast<uint32_t>( baseVertexLocation );
+            const uint8_t *vertexBytes = vertexData + static_cast<size_t>( vertexIndex ) * stride;
+            swr::VertexInputView inputView( vertexBytes, layout );
+            return vertexShader( inputView, ctx );
+        };
+
+        assemblePrimitives( topology, indexCount, fetchVertex, std::forward<EmitPrimitiveFn>( emitPrimitive ) );
+    }
+
     struct TextureLock
     {
         SDL_Texture *tex{ nullptr };
@@ -213,11 +331,6 @@ namespace swr
     void Device::draw( size_t vertexCount, size_t startVertexLocation )
     {
         // IA - забираем VB
-        if( iaStage.primitiveTopology != PrimitiveTopology::TriangleList )
-        {
-            assert( false && "Unsupported primitive topology" );
-            return;
-        }
         auto vb = iaStage.vertexBuffer;
         if( !vb )
         {
@@ -238,33 +351,16 @@ namespace swr
 
         const uint8_t *vertexData = static_cast<const uint8_t *>( vb->data() );
         size_t stride = layout->stride();
-
-        // VS - трансформируем вершины прогоняя их через шейдер
-        std::vector<VSOutput> vsOut( vertexCount );
         ShaderContext ctx( vsStage.constantBuffers, psStage.constantBuffers );
 
-        for( size_t i = 0; i < vertexCount; ++i )
-        {
-            const uint8_t *vertexBytes = vertexData + ( startVertexLocation + i ) * stride;
-            VertexInputView inputView( vertexBytes, layout.get() );
-            vsOut[i] = vsStage.vertexShader( inputView, ctx );
-        }
-
-        // Primitive assembly: triangle list, растеризация каждого треугольника
-        for( size_t i = 0; i + 2 < vertexCount; i += 3 )
-        {
-            rasterizeTri( vsOut[i], vsOut[i + 1], vsOut[i + 2], ctx );
-        }
+        emitNonIndexedPrimitives(
+            vertexData, stride, startVertexLocation, vertexCount, layout.get(), ctx, vsStage.vertexShader,
+            iaStage.primitiveTopology,
+            [&]( const AssembledPrimitive &primitive ) { rasterizePrimitive( primitive, ctx ); } );
     }
 
     void Device::drawIndexed( size_t indexCount, size_t startIndexLocation, size_t baseVertexLocation )
     {
-        if( iaStage.primitiveTopology != PrimitiveTopology::TriangleList )
-        {
-            assert( false && "Unsupported primitive topology" );
-            return;
-        }
-
         auto vb = iaStage.vertexBuffer;
         auto ib = iaStage.indexBuffer;
         if( !vb || !ib )
@@ -299,45 +395,128 @@ namespace swr
         size_t stride = layout->stride();
         ShaderContext ctx( vsStage.constantBuffers, psStage.constantBuffers );
 
-        // Идём по тройкам индексов
-        for( size_t i = 0; i + 2 < indexCount; i += 3 )
+        emitIndexedPrimitives( idxBytes, idxFmt, idxElemSize, vertexData, stride, startIndexLocation, indexCount,
+                               baseVertexLocation, layout.get(), ctx, vsStage.vertexShader, iaStage.primitiveTopology,
+                               [&]( const AssembledPrimitive &primitive ) { rasterizePrimitive( primitive, ctx ); } );
+    }
+
+    void Device::rasterizePrimitive( const AssembledPrimitive &primitive, const ShaderContext &ctx )
+    {
+        switch( primitive.kind )
         {
-            auto readIndex = [&]( size_t idxPos ) -> uint32_t {
-                size_t offset = ( startIndexLocation + idxPos ) * idxElemSize;
-                if( idxFmt == BufferFormat::R16_UINT )
-                {
-                    const uint16_t *p = reinterpret_cast<const uint16_t *>( idxBytes + offset );
-                    return static_cast<uint32_t>( *p );
-                }
-                else
-                {
-                    const uint32_t *p = reinterpret_cast<const uint32_t *>( idxBytes + offset );
-                    return *p;
-                }
-            };
+        case PrimitiveKind::Point:
+            rasterizePoint( primitive.vertices[0], ctx );
+            break;
 
-            uint32_t i0 = readIndex( i ) + static_cast<uint32_t>( baseVertexLocation );
-            uint32_t i1 = readIndex( i + 1 ) + static_cast<uint32_t>( baseVertexLocation );
-            uint32_t i2 = readIndex( i + 2 ) + static_cast<uint32_t>( baseVertexLocation );
+        case PrimitiveKind::Line:
+            rasterizeLine( primitive.vertices[0], primitive.vertices[1], ctx );
+            break;
 
-            // Выполняем VS для каждой вершины (при желании можно закэшировать)
-            const uint8_t *vBytes0 = vertexData + static_cast<size_t>( i0 ) * stride;
-            const uint8_t *vBytes1 = vertexData + static_cast<size_t>( i1 ) * stride;
-            const uint8_t *vBytes2 = vertexData + static_cast<size_t>( i2 ) * stride;
+        case PrimitiveKind::Triangle:
+            rasterizeTriangle( primitive.vertices[0], primitive.vertices[1], primitive.vertices[2], ctx );
+            break;
 
-            VertexInputView view0( vBytes0, layout.get() );
-            VertexInputView view1( vBytes1, layout.get() );
-            VertexInputView view2( vBytes2, layout.get() );
-
-            VSOutput o0 = vsStage.vertexShader( view0, ctx );
-            VSOutput o1 = vsStage.vertexShader( view1, ctx );
-            VSOutput o2 = vsStage.vertexShader( view2, ctx );
-
-            rasterizeTri( o0, o1, o2, ctx );
+        default:
+            assert( false && "Unsupported primitive kind" );
+            break;
         }
     }
 
-    void Device::rasterizeTri( const VSOutput &v0, const VSOutput &v1, const VSOutput &v2, const ShaderContext &ctx )
+    void Device::rasterizePoint( const VSOutput &vertex, const ShaderContext &ctx )
+    {
+        Viewport vp{ 0, 0, static_cast<int>( frameWidth ), static_cast<int>( frameHeight ), 0.0f, 1.0f };
+        if( rsStage.viewport.width > 0 && rsStage.viewport.height > 0 )
+            vp = rsStage.viewport;
+
+        glm::vec3 ndc = glm::vec3( vertex.position ) / vertex.position.w;
+        float sx = ( ndc.x * 0.5f + 0.5f ) * static_cast<float>( vp.width ) + static_cast<float>( vp.x );
+        float sy = ( 1.0f - ( ndc.y * 0.5f + 0.5f ) ) * static_cast<float>( vp.height ) + static_cast<float>( vp.y );
+
+        int pixelX = static_cast<int>( glm::floor( sx ) );
+        int pixelY = static_cast<int>( glm::floor( sy ) );
+        if( pixelX < vp.x || pixelX >= vp.x + vp.width || pixelY < vp.y || pixelY >= vp.y + vp.height )
+            return;
+
+        size_t fbIndex = static_cast<size_t>( pixelY ) * frameWidth + static_cast<size_t>( pixelX );
+        float depth = ndc.z;
+        if( depth >= frameBuffers.depthBuffer[fbIndex] )
+            return;
+
+        PSInput psIn;
+        psIn.color = vertex.color;
+        psIn.barycentric = glm::vec3( 1.0f, 0.0f, 0.0f );
+        psIn.depth = depth;
+
+        glm::vec4 outColor = psStage.pixelShader( psIn, ctx );
+        frameBuffers.colorBuffer[fbIndex] = outColor;
+        frameBuffers.depthBuffer[fbIndex] = depth;
+    }
+
+    void Device::rasterizeLine( const VSOutput &v0, const VSOutput &v1, const ShaderContext &ctx )
+    {
+        Viewport vp{ 0, 0, static_cast<int>( frameWidth ), static_cast<int>( frameHeight ), 0.0f, 1.0f };
+        if( rsStage.viewport.width > 0 && rsStage.viewport.height > 0 )
+            vp = rsStage.viewport;
+
+        auto p0 = glm::vec3( v0.position ) / v0.position.w;
+        auto p1 = glm::vec3( v1.position ) / v1.position.w;
+
+        auto ndcToViewport = [&]( const glm::vec3 &ndc ) {
+            float sx = ( ndc.x * 0.5f + 0.5f ) * static_cast<float>( vp.width ) + static_cast<float>( vp.x );
+            float sy =
+                ( 1.0f - ( ndc.y * 0.5f + 0.5f ) ) * static_cast<float>( vp.height ) + static_cast<float>( vp.y );
+            return glm::vec2( sx, sy );
+        };
+
+        glm::vec2 s0 = ndcToViewport( p0 );
+        glm::vec2 s1 = ndcToViewport( p1 );
+        glm::vec2 delta = s1 - s0;
+        int steps = static_cast<int>( glm::ceil( glm::max( glm::abs( delta.x ), glm::abs( delta.y ) ) ) );
+
+        if( steps == 0 )
+        {
+            rasterizePoint( v0, ctx );
+            return;
+        }
+
+        float invW0 = 1.0f / v0.position.w;
+        float invW1 = 1.0f / v1.position.w;
+
+        for( int step = 0; step <= steps; ++step )
+        {
+            float t = static_cast<float>( step ) / static_cast<float>( steps );
+            glm::vec2 samplePos = glm::mix( s0, s1, t );
+            int pixelX = static_cast<int>( glm::floor( samplePos.x ) );
+            int pixelY = static_cast<int>( glm::floor( samplePos.y ) );
+
+            if( pixelX < vp.x || pixelX >= vp.x + vp.width || pixelY < vp.y || pixelY >= vp.y + vp.height )
+                continue;
+
+            float w0 = 1.0f - t;
+            float w1 = t;
+            float denom = w0 * invW0 + w1 * invW1;
+            if( denom <= 0.0f )
+                continue;
+
+            float depth = ( w0 * p0.z * invW0 + w1 * p1.z * invW1 ) / denom;
+            size_t fbIndex = static_cast<size_t>( pixelY ) * frameWidth + static_cast<size_t>( pixelX );
+            if( depth >= frameBuffers.depthBuffer[fbIndex] )
+                continue;
+
+            PSInput psIn;
+            glm::vec3 colorNum = w0 * v0.color * invW0 + w1 * v1.color * invW1;
+            psIn.color = colorNum / denom;
+            psIn.barycentric = glm::vec3( w0, w1, 0.0f );
+            psIn.depth = depth;
+
+            glm::vec4 outColor = psStage.pixelShader( psIn, ctx );
+            frameBuffers.colorBuffer[fbIndex] = outColor;
+            frameBuffers.depthBuffer[fbIndex] = depth;
+        }
+    }
+
+    void Device::rasterizeTriangle( const VSOutput &v0, const VSOutput &v1, const VSOutput &v2,
+                                    const ShaderContext &ctx )
     {
         // Получаем viewport (если не задан, используем весь кадр)
         Viewport vp{ 0, 0, static_cast<int>( frameWidth ), static_cast<int>( frameHeight ), 0.0f, 1.0f };
