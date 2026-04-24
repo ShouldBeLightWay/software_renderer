@@ -117,6 +117,22 @@ namespace swr
         std::fill( frameBuffers.depthBuffer.begin(), frameBuffers.depthBuffer.end(), clearDepth );
     }
 
+    void Device::setTileRasterEnabled( bool enabled )
+    {
+        tileRaster.enabled = enabled;
+    }
+
+    bool Device::isTileRasterEnabled() const
+    {
+        return tileRaster.enabled;
+    }
+
+    void Device::setTileSize( int width, int height )
+    {
+        tileRaster.width = std::max( 1, width );
+        tileRaster.height = std::max( 1, height );
+    }
+
     bool Device::prepareDrawState( DrawState &drawState ) const
     {
         drawState.vertexBuffer = iaStage.vertexBuffer;

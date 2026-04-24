@@ -350,6 +350,9 @@ namespace swr
         void clear();
         void draw( size_t vertexCount, size_t startVertexLocation );
         void drawIndexed( size_t indexCount, size_t startIndexLocation, size_t baseVertexLocation );
+        void setTileRasterEnabled( bool enabled );
+        bool isTileRasterEnabled() const;
+        void setTileSize( int width, int height );
 
       private:
         struct DrawState
@@ -368,9 +371,17 @@ namespace swr
             VertexShader vertexShader;
         };
 
+        struct TileRasterState
+        {
+            bool enabled = false;
+            int width = 16;
+            int height = 16;
+        };
+
         bool prepareDrawState( DrawState &drawState ) const;
         void shadeAndWritePixel( size_t fbIndex, float depth, const PSInput &psIn, const ShaderContext &ctx );
         void drawLinear( const std::vector<AssembledPrimitive> &primitives, const ShaderContext &ctx );
+        void drawTiled( const std::vector<AssembledPrimitive> &primitives, const ShaderContext &ctx );
         void rasterizePrimitive( const AssembledPrimitive &primitive, const ShaderContext &ctx );
         void rasterizePoint( const VSOutput &vertex, const ShaderContext &ctx );
         void rasterizeLine( const VSOutput &v0, const VSOutput &v1, const ShaderContext &ctx );
@@ -409,6 +420,7 @@ namespace swr
 
         InternalFrameBuffers frameBuffers;
         std::vector<AssembledPrimitive> assembledPrimitivesScratch;
+        TileRasterState tileRaster;
         PresentCallback presentCallback;
         size_t frameWidth;
         size_t frameHeight;

@@ -158,6 +158,11 @@ namespace swr
             rasterizePrimitive( primitive, ctx );
     }
 
+    void Device::drawTiled( const std::vector<AssembledPrimitive> &primitives, const ShaderContext &ctx )
+    {
+        drawLinear( primitives, ctx );
+    }
+
     void Device::draw( size_t vertexCount, size_t startVertexLocation )
     {
         DrawState drawState( vsStage.constantBuffers, psStage.constantBuffers );
@@ -172,7 +177,10 @@ namespace swr
             drawState.shaderContext, drawState.vertexShader, iaStage.primitiveTopology,
             [&]( const AssembledPrimitive &primitive ) { assembledPrimitivesScratch.push_back( primitive ); } );
 
-        drawLinear( assembledPrimitivesScratch, drawState.shaderContext );
+        if( tileRaster.enabled )
+            drawTiled( assembledPrimitivesScratch, drawState.shaderContext );
+        else
+            drawLinear( assembledPrimitivesScratch, drawState.shaderContext );
     }
 
     void Device::drawIndexed( size_t indexCount, size_t startIndexLocation, size_t baseVertexLocation )
@@ -208,7 +216,10 @@ namespace swr
             iaStage.primitiveTopology,
             [&]( const AssembledPrimitive &primitive ) { assembledPrimitivesScratch.push_back( primitive ); } );
 
-        drawLinear( assembledPrimitivesScratch, drawState.shaderContext );
+        if( tileRaster.enabled )
+            drawTiled( assembledPrimitivesScratch, drawState.shaderContext );
+        else
+            drawLinear( assembledPrimitivesScratch, drawState.shaderContext );
     }
 
     void Device::rasterizePrimitive( const AssembledPrimitive &primitive, const ShaderContext &ctx )
