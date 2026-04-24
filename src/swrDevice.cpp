@@ -9,6 +9,70 @@ namespace
         return std::max( 0.5f, lineWidth );
     }
 
+    struct RasterBounds
+    {
+        int minX;
+        int maxX;
+        int minY;
+        int maxY;
+    };
+
+    static inline swr::Viewport resolveViewport( const swr::Viewport &configuredViewport, size_t frameWidth,
+                                                 size_t frameHeight )
+    {
+        if( configuredViewport.width > 0 && configuredViewport.height > 0 )
+            return configuredViewport;
+
+        return swr::Viewport{ 0, 0, static_cast<int>( frameWidth ), static_cast<int>( frameHeight ), 0.0f, 1.0f };
+    }
+
+    static inline glm::vec3 perspectiveDivide( const swr::VSOutput &vertex )
+    {
+        return glm::vec3( vertex.position ) / vertex.position.w;
+    }
+
+    static inline glm::vec2 ndcToViewport( const glm::vec3 &ndc, const swr::Viewport &vp )
+    {
+        float sx = ( ndc.x * 0.5f + 0.5f ) * static_cast<float>( vp.width ) + static_cast<float>( vp.x );
+        float sy = ( 1.0f - ( ndc.y * 0.5f + 0.5f ) ) * static_cast<float>( vp.height ) + static_cast<float>( vp.y );
+        return glm::vec2( sx, sy );
+    }
+
+    static inline bool clipBoundsToViewport( RasterBounds &bounds, const swr::Viewport &vp )
+    {
+        bounds.minX = std::max( bounds.minX, vp.x );
+        bounds.minY = std::max( bounds.minY, vp.y );
+        bounds.maxX = std::min( bounds.maxX, vp.x + vp.width - 1 );
+        bounds.maxY = std::min( bounds.maxY, vp.y + vp.height - 1 );
+        return bounds.minX <= bounds.maxX && bounds.minY <= bounds.maxY;
+    }
+
+    static inline size_t frameBufferIndex( int x, int y, size_t frameWidth )
+    {
+        return static_cast<size_t>( y ) * frameWidth + static_cast<size_t>( x );
+    }
+
+    static inline const float *findSemanticData( const uint8_t *data, const swr::InputLayout *layout,
+                                                 swr::Semantic semantic )
+    {
+        const auto &desc = layout->desc();
+        for( const auto &elem : desc.elements )
+        {
+            if( elem.semantic == semantic )
+                return reinterpret_cast<const float *>( data + elem.offset );
+        }
+
+        return nullptr;
+    }
+
+    static inline void setConstantBufferSlot( std::vector<std::shared_ptr<swr::Buffer>> &constantBuffers, size_t slot,
+                                              std::shared_ptr<swr::Buffer> buffer )
+    {
+        if( slot >= constantBuffers.size() )
+            constantBuffers.resize( slot + 1 );
+        constantBuffers[slot] = std::move( buffer );
+    }
+
     template<typename FetchVertexFn, typename EmitPrimitiveFn>
     void assemblePrimitives( swr::PrimitiveTopology topology, size_t vertexCount, FetchVertexFn &&fetchVertex,
                              EmitPrimitiveFn &&emitPrimitive )
@@ -165,57 +229,33 @@ namespace swr
     // VertexInputView implementations
     float VertexInputView::readFloat1( Semantic semantic, size_t index ) const
     {
-        const auto &desc = layout->desc();
-        for( const auto &elem : desc.elements )
-        {
-            if( elem.semantic == semantic )
-            {
-                const float *ptr = reinterpret_cast<const float *>( data + elem.offset );
-                return ptr[index];
-            }
-        }
+        const float *ptr = findSemanticData( data, layout, semantic );
+        if( ptr )
+            return ptr[index];
         return 0.0f;
     }
 
     glm::vec2 VertexInputView::readFloat2( Semantic semantic ) const
     {
-        const auto &desc = layout->desc();
-        for( const auto &elem : desc.elements )
-        {
-            if( elem.semantic == semantic )
-            {
-                const float *ptr = reinterpret_cast<const float *>( data + elem.offset );
-                return glm::vec2( ptr[0], ptr[1] );
-            }
-        }
+        const float *ptr = findSemanticData( data, layout, semantic );
+        if( ptr )
+            return glm::vec2( ptr[0], ptr[1] );
         return glm::vec2( 0.0f );
     }
 
     glm::vec3 VertexInputView::readFloat3( Semantic semantic ) const
     {
-        const auto &desc = layout->desc();
-        for( const auto &elem : desc.elements )
-        {
-            if( elem.semantic == semantic )
-            {
-                const float *ptr = reinterpret_cast<const float *>( data + elem.offset );
-                return glm::vec3( ptr[0], ptr[1], ptr[2] );
-            }
-        }
+        const float *ptr = findSemanticData( data, layout, semantic );
+        if( ptr )
+            return glm::vec3( ptr[0], ptr[1], ptr[2] );
         return glm::vec3( 0.0f );
     }
 
     glm::vec4 VertexInputView::readFloat4( Semantic semantic ) const
     {
-        const auto &desc = layout->desc();
-        for( const auto &elem : desc.elements )
-        {
-            if( elem.semantic == semantic )
-            {
-                const float *ptr = reinterpret_cast<const float *>( data + elem.offset );
-                return glm::vec4( ptr[0], ptr[1], ptr[2], ptr[3] );
-            }
-        }
+        const float *ptr = findSemanticData( data, layout, semantic );
+        if( ptr )
+            return glm::vec4( ptr[0], ptr[1], ptr[2], ptr[3] );
         return glm::vec4( 0.0f );
     }
 
@@ -251,55 +291,63 @@ namespace swr
         return ( c.x - a.x ) * ( b.y - a.y ) - ( c.y - a.y ) * ( b.x - a.x );
     }
 
-    void Device::draw( size_t vertexCount, size_t startVertexLocation )
+    bool Device::prepareDrawState( DrawState &drawState ) const
     {
-        // IA - забираем VB
-        auto vb = iaStage.vertexBuffer;
-        if( !vb )
+        drawState.vertexBuffer = iaStage.vertexBuffer;
+        if( !drawState.vertexBuffer )
         {
             assert( false && "No vertex buffer set" );
-            return;
+            return false;
         }
-        auto layout = iaStage.inputLayout;
-        if( !layout )
+
+        drawState.inputLayout = iaStage.inputLayout;
+        if( !drawState.inputLayout )
         {
             assert( false && "No input layout set" );
-            return;
+            return false;
         }
+
         if( !vsStage.vertexShader )
         {
             assert( false && "No vertex shader set" );
-            return;
+            return false;
         }
 
-        const uint8_t *vertexData = static_cast<const uint8_t *>( vb->data() );
-        size_t stride = layout->stride();
-        ShaderContext ctx( vsStage.constantBuffers, psStage.constantBuffers );
+        drawState.vertexData = static_cast<const uint8_t *>( drawState.vertexBuffer->data() );
+        drawState.stride = drawState.inputLayout->stride();
+        drawState.vertexShader = vsStage.vertexShader;
+        return true;
+    }
+
+    void Device::shadeAndWritePixel( size_t fbIndex, float depth, const PSInput &psIn, const ShaderContext &ctx )
+    {
+        glm::vec4 outColor = psStage.pixelShader( psIn, ctx );
+        frameBuffers.colorBuffer[fbIndex] = outColor;
+        frameBuffers.depthBuffer[fbIndex] = depth;
+    }
+
+    void Device::draw( size_t vertexCount, size_t startVertexLocation )
+    {
+        DrawState drawState( vsStage.constantBuffers, psStage.constantBuffers );
+        if( !prepareDrawState( drawState ) )
+            return;
 
         emitNonIndexedPrimitives(
-            vertexData, stride, startVertexLocation, vertexCount, layout.get(), ctx, vsStage.vertexShader,
-            iaStage.primitiveTopology,
-            [&]( const AssembledPrimitive &primitive ) { rasterizePrimitive( primitive, ctx ); } );
+            drawState.vertexData, drawState.stride, startVertexLocation, vertexCount, drawState.inputLayout.get(),
+            drawState.shaderContext, drawState.vertexShader, iaStage.primitiveTopology,
+            [&]( const AssembledPrimitive &primitive ) { rasterizePrimitive( primitive, drawState.shaderContext ); } );
     }
 
     void Device::drawIndexed( size_t indexCount, size_t startIndexLocation, size_t baseVertexLocation )
     {
-        auto vb = iaStage.vertexBuffer;
+        DrawState drawState( vsStage.constantBuffers, psStage.constantBuffers );
+        if( !prepareDrawState( drawState ) )
+            return;
+
         auto ib = iaStage.indexBuffer;
-        if( !vb || !ib )
+        if( !ib )
         {
-            assert( false && "Vertex or Index buffer not set" );
-            return;
-        }
-        auto layout = iaStage.inputLayout;
-        if( !layout )
-        {
-            assert( false && "No input layout set" );
-            return;
-        }
-        if( !vsStage.vertexShader )
-        {
-            assert( false && "No vertex shader set" );
+            assert( false && "Index buffer not set" );
             return;
         }
 
@@ -314,13 +362,12 @@ namespace swr
         }
 
         const uint8_t *idxBytes = static_cast<const uint8_t *>( ib->data() );
-        const uint8_t *vertexData = static_cast<const uint8_t *>( vb->data() );
-        size_t stride = layout->stride();
-        ShaderContext ctx( vsStage.constantBuffers, psStage.constantBuffers );
 
-        emitIndexedPrimitives( idxBytes, idxFmt, idxElemSize, vertexData, stride, startIndexLocation, indexCount,
-                               baseVertexLocation, layout.get(), ctx, vsStage.vertexShader, iaStage.primitiveTopology,
-                               [&]( const AssembledPrimitive &primitive ) { rasterizePrimitive( primitive, ctx ); } );
+        emitIndexedPrimitives(
+            idxBytes, idxFmt, idxElemSize, drawState.vertexData, drawState.stride, startIndexLocation, indexCount,
+            baseVertexLocation, drawState.inputLayout.get(), drawState.shaderContext, drawState.vertexShader,
+            iaStage.primitiveTopology,
+            [&]( const AssembledPrimitive &primitive ) { rasterizePrimitive( primitive, drawState.shaderContext ); } );
     }
 
     void Device::rasterizePrimitive( const AssembledPrimitive &primitive, const ShaderContext &ctx )
@@ -347,20 +394,17 @@ namespace swr
 
     void Device::rasterizePoint( const VSOutput &vertex, const ShaderContext &ctx )
     {
-        Viewport vp{ 0, 0, static_cast<int>( frameWidth ), static_cast<int>( frameHeight ), 0.0f, 1.0f };
-        if( rsStage.viewport.width > 0 && rsStage.viewport.height > 0 )
-            vp = rsStage.viewport;
+        Viewport vp = resolveViewport( rsStage.viewport, frameWidth, frameHeight );
 
-        glm::vec3 ndc = glm::vec3( vertex.position ) / vertex.position.w;
-        float sx = ( ndc.x * 0.5f + 0.5f ) * static_cast<float>( vp.width ) + static_cast<float>( vp.x );
-        float sy = ( 1.0f - ( ndc.y * 0.5f + 0.5f ) ) * static_cast<float>( vp.height ) + static_cast<float>( vp.y );
+        glm::vec3 ndc = perspectiveDivide( vertex );
+        glm::vec2 screenPos = ndcToViewport( ndc, vp );
 
-        int pixelX = static_cast<int>( glm::floor( sx ) );
-        int pixelY = static_cast<int>( glm::floor( sy ) );
+        int pixelX = static_cast<int>( glm::floor( screenPos.x ) );
+        int pixelY = static_cast<int>( glm::floor( screenPos.y ) );
         if( pixelX < vp.x || pixelX >= vp.x + vp.width || pixelY < vp.y || pixelY >= vp.y + vp.height )
             return;
 
-        size_t fbIndex = static_cast<size_t>( pixelY ) * frameWidth + static_cast<size_t>( pixelX );
+        size_t fbIndex = frameBufferIndex( pixelX, pixelY, frameWidth );
         float depth = ndc.z;
         if( depth >= frameBuffers.depthBuffer[fbIndex] )
             return;
@@ -370,29 +414,18 @@ namespace swr
         psIn.barycentric = glm::vec3( 1.0f, 0.0f, 0.0f );
         psIn.depth = depth;
 
-        glm::vec4 outColor = psStage.pixelShader( psIn, ctx );
-        frameBuffers.colorBuffer[fbIndex] = outColor;
-        frameBuffers.depthBuffer[fbIndex] = depth;
+        shadeAndWritePixel( fbIndex, depth, psIn, ctx );
     }
 
     void Device::rasterizeLine( const VSOutput &v0, const VSOutput &v1, const ShaderContext &ctx )
     {
-        Viewport vp{ 0, 0, static_cast<int>( frameWidth ), static_cast<int>( frameHeight ), 0.0f, 1.0f };
-        if( rsStage.viewport.width > 0 && rsStage.viewport.height > 0 )
-            vp = rsStage.viewport;
+        Viewport vp = resolveViewport( rsStage.viewport, frameWidth, frameHeight );
 
-        auto p0 = glm::vec3( v0.position ) / v0.position.w;
-        auto p1 = glm::vec3( v1.position ) / v1.position.w;
+        auto p0 = perspectiveDivide( v0 );
+        auto p1 = perspectiveDivide( v1 );
 
-        auto ndcToViewport = [&]( const glm::vec3 &ndc ) {
-            float sx = ( ndc.x * 0.5f + 0.5f ) * static_cast<float>( vp.width ) + static_cast<float>( vp.x );
-            float sy =
-                ( 1.0f - ( ndc.y * 0.5f + 0.5f ) ) * static_cast<float>( vp.height ) + static_cast<float>( vp.y );
-            return glm::vec2( sx, sy );
-        };
-
-        glm::vec2 s0 = ndcToViewport( p0 );
-        glm::vec2 s1 = ndcToViewport( p1 );
+        glm::vec2 s0 = ndcToViewport( p0, vp );
+        glm::vec2 s1 = ndcToViewport( p1, vp );
         glm::vec2 segment = s1 - s0;
         float segmentLen2 = glm::dot( segment, segment );
         float halfWidth = clampLineWidth( rsStage.lineWidth ) * 0.5f;
@@ -403,22 +436,19 @@ namespace swr
             return;
         }
 
-        int minX = static_cast<int>( glm::floor( glm::min( s0.x, s1.x ) - halfWidth ) );
-        int maxX = static_cast<int>( glm::ceil( glm::max( s0.x, s1.x ) + halfWidth ) );
-        int minY = static_cast<int>( glm::floor( glm::min( s0.y, s1.y ) - halfWidth ) );
-        int maxY = static_cast<int>( glm::ceil( glm::max( s0.y, s1.y ) + halfWidth ) );
-
-        minX = std::max( minX, vp.x );
-        minY = std::max( minY, vp.y );
-        maxX = std::min( maxX, vp.x + vp.width - 1 );
-        maxY = std::min( maxY, vp.y + vp.height - 1 );
+        RasterBounds bounds{ static_cast<int>( glm::floor( glm::min( s0.x, s1.x ) - halfWidth ) ),
+                             static_cast<int>( glm::ceil( glm::max( s0.x, s1.x ) + halfWidth ) ),
+                             static_cast<int>( glm::floor( glm::min( s0.y, s1.y ) - halfWidth ) ),
+                             static_cast<int>( glm::ceil( glm::max( s0.y, s1.y ) + halfWidth ) ) };
+        if( !clipBoundsToViewport( bounds, vp ) )
+            return;
 
         float invW0 = 1.0f / v0.position.w;
         float invW1 = 1.0f / v1.position.w;
 
-        for( int y = minY; y <= maxY; ++y )
+        for( int y = bounds.minY; y <= bounds.maxY; ++y )
         {
-            for( int x = minX; x <= maxX; ++x )
+            for( int x = bounds.minX; x <= bounds.maxX; ++x )
             {
                 glm::vec2 samplePos( static_cast<float>( x ) + 0.5f, static_cast<float>( y ) + 0.5f );
                 float t = glm::dot( samplePos - s0, segment ) / segmentLen2;
@@ -436,7 +466,7 @@ namespace swr
                     continue;
 
                 float depth = ( w0 * p0.z * invW0 + w1 * p1.z * invW1 ) / denom;
-                size_t fbIndex = static_cast<size_t>( y ) * frameWidth + static_cast<size_t>( x );
+                size_t fbIndex = frameBufferIndex( x, y, frameWidth );
                 if( depth >= frameBuffers.depthBuffer[fbIndex] )
                     continue;
 
@@ -446,9 +476,7 @@ namespace swr
                 psIn.barycentric = glm::vec3( w0, w1, 0.0f );
                 psIn.depth = depth;
 
-                glm::vec4 outColor = psStage.pixelShader( psIn, ctx );
-                frameBuffers.colorBuffer[fbIndex] = outColor;
-                frameBuffers.depthBuffer[fbIndex] = depth;
+                shadeAndWritePixel( fbIndex, depth, psIn, ctx );
             }
         }
     }
@@ -457,38 +485,25 @@ namespace swr
                                     const ShaderContext &ctx )
     {
         // Получаем viewport (если не задан, используем весь кадр)
-        Viewport vp{ 0, 0, static_cast<int>( frameWidth ), static_cast<int>( frameHeight ), 0.0f, 1.0f };
-        if( rsStage.viewport.width > 0 && rsStage.viewport.height > 0 )
-            vp = rsStage.viewport;
-        const float vpW = static_cast<float>( vp.width );
-        const float vpH = static_cast<float>( vp.height );
+        Viewport vp = resolveViewport( rsStage.viewport, frameWidth, frameHeight );
 
         // Clip to NDC space
-        auto p0 = glm::vec3( v0.position ) / v0.position.w;
-        auto p1 = glm::vec3( v1.position ) / v1.position.w;
-        auto p2 = glm::vec3( v2.position ) / v2.position.w;
+        auto p0 = perspectiveDivide( v0 );
+        auto p1 = perspectiveDivide( v1 );
+        auto p2 = perspectiveDivide( v2 );
 
         // NDC to Screen space (viewport transform)
-        auto ndcToViewport = [&]( const glm::vec3 &ndc ) {
-            float sx = ( ndc.x * 0.5f + 0.5f ) * vpW + static_cast<float>( vp.x );
-            float sy = ( 1.0f - ( ndc.y * 0.5f + 0.5f ) ) * vpH + static_cast<float>( vp.y );
-            return glm::vec2( sx, sy );
-        };
-        glm::vec2 s0 = ndcToViewport( p0 );
-        glm::vec2 s1 = ndcToViewport( p1 );
-        glm::vec2 s2 = ndcToViewport( p2 );
+        glm::vec2 s0 = ndcToViewport( p0, vp );
+        glm::vec2 s1 = ndcToViewport( p1, vp );
+        glm::vec2 s2 = ndcToViewport( p2, vp );
 
         // Boundig box
-        int minX = static_cast<int>( glm::floor( glm::min( glm::min( s0.x, s1.x ), s2.x ) ) );
-        int maxX = static_cast<int>( glm::ceil( glm::max( glm::max( s0.x, s1.x ), s2.x ) ) );
-        int minY = static_cast<int>( glm::floor( glm::min( glm::min( s0.y, s1.y ), s2.y ) ) );
-        int maxY = static_cast<int>( glm::ceil( glm::max( glm::max( s0.y, s1.y ), s2.y ) ) );
-
-        // Отсечение по viewport прямоугольнику
-        minX = std::max( minX, vp.x );
-        minY = std::max( minY, vp.y );
-        maxX = std::min( maxX, vp.x + vp.width - 1 );
-        maxY = std::min( maxY, vp.y + vp.height - 1 );
+        RasterBounds bounds{ static_cast<int>( glm::floor( glm::min( glm::min( s0.x, s1.x ), s2.x ) ) ),
+                             static_cast<int>( glm::ceil( glm::max( glm::max( s0.x, s1.x ), s2.x ) ) ),
+                             static_cast<int>( glm::floor( glm::min( glm::min( s0.y, s1.y ), s2.y ) ) ),
+                             static_cast<int>( glm::ceil( glm::max( glm::max( s0.y, s1.y ), s2.y ) ) ) };
+        if( !clipBoundsToViewport( bounds, vp ) )
+            return;
 
         // Полная площадь треугольника
         float area = edgeFunction( s0, s1, s2 );
@@ -503,9 +518,9 @@ namespace swr
         }
 
         // Растеризация внутри ограничивающего прямоугольника
-        for( int y = minY; y <= maxY; ++y )
+        for( int y = bounds.minY; y <= bounds.maxY; ++y )
         {
-            for( int x = minX; x <= maxX; ++x )
+            for( int x = bounds.minX; x <= bounds.maxX; ++x )
             {
                 glm::vec2 p( static_cast<float>( x ) + 0.5f, static_cast<float>( y ) + 0.5f );
 
@@ -549,7 +564,7 @@ namespace swr
                     // Интерполяция глубины (z_ndc) с делением на общий знаменатель
                     float depth = ( w0 * p0.z + w1 * p1.z + w2 * p2.z ) / denom;
 
-                    size_t fbIndex = static_cast<size_t>( y ) * frameWidth + static_cast<size_t>( x );
+                    size_t fbIndex = frameBufferIndex( x, y, frameWidth );
                     // Тест глубины
                     if( depth < frameBuffers.depthBuffer[fbIndex] )
                     {
@@ -561,11 +576,7 @@ namespace swr
                         psIn.barycentric = glm::vec3( w0, w1, w2 );
                         psIn.depth = depth;
 
-                        glm::vec4 outColor = psStage.pixelShader( psIn, ctx );
-
-                        // Запись в буферы
-                        frameBuffers.colorBuffer[fbIndex] = outColor;
-                        frameBuffers.depthBuffer[fbIndex] = depth;
+                        shadeAndWritePixel( fbIndex, depth, psIn, ctx );
                     }
                 }
             }
@@ -597,9 +608,7 @@ namespace swr
     }
     void Device::VSStage::setConstantBuffer( size_t slot, std::shared_ptr<Buffer> buffer )
     {
-        if( slot >= constantBuffers.size() )
-            constantBuffers.resize( slot + 1 );
-        constantBuffers[slot] = std::move( buffer );
+        setConstantBufferSlot( constantBuffers, slot, std::move( buffer ) );
     }
 
     // RSStage
@@ -627,9 +636,7 @@ namespace swr
     }
     void Device::PSStage::setConstantBuffer( size_t slot, std::shared_ptr<Buffer> buffer )
     {
-        if( slot >= constantBuffers.size() )
-            constantBuffers.resize( slot + 1 );
-        constantBuffers[slot] = std::move( buffer );
+        setConstantBufferSlot( constantBuffers, slot, std::move( buffer ) );
     }
 
     // OMStage
