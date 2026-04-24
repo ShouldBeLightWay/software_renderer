@@ -13,7 +13,9 @@ set(SWR_HEADERS
 set(SWR_SOURCES
     ${CMAKE_CURRENT_LIST_DIR}/main.cpp
     ${CMAKE_CURRENT_LIST_DIR}/PrimitiveTopologyScene.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/swrDevice.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/swrDeviceCore.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/swrDeviceDraw.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/swrDeviceRaster.cpp
     ${CMAKE_CURRENT_LIST_DIR}/SceneManager.cpp
     ${CMAKE_CURRENT_LIST_DIR}/TriangleScene.cpp
 )
