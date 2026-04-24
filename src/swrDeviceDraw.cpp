@@ -4,6 +4,31 @@
 
 namespace
 {
+    static inline size_t estimatePrimitiveCount( swr::PrimitiveTopology topology, size_t elementCount )
+    {
+        switch( topology )
+        {
+        case swr::PrimitiveTopology::PointList:
+            return elementCount;
+
+        case swr::PrimitiveTopology::LineList:
+            return elementCount / 2;
+
+        case swr::PrimitiveTopology::LineStrip:
+            return elementCount > 1 ? elementCount - 1 : 0;
+
+        case swr::PrimitiveTopology::TriangleList:
+            return elementCount / 3;
+
+        case swr::PrimitiveTopology::TriangleStrip:
+        case swr::PrimitiveTopology::TriangleFan:
+            return elementCount > 2 ? elementCount - 2 : 0;
+
+        default:
+            return 0;
+        }
+    }
+
     template<typename FetchVertexFn, typename EmitPrimitiveFn>
     void assemblePrimitives( swr::PrimitiveTopology topology, size_t vertexCount, FetchVertexFn &&fetchVertex,
                              EmitPrimitiveFn &&emitPrimitive )
@@ -127,16 +152,27 @@ namespace
 namespace swr
 {
 
+    void Device::drawLinear( const std::vector<AssembledPrimitive> &primitives, const ShaderContext &ctx )
+    {
+        for( const AssembledPrimitive &primitive : primitives )
+            rasterizePrimitive( primitive, ctx );
+    }
+
     void Device::draw( size_t vertexCount, size_t startVertexLocation )
     {
         DrawState drawState( vsStage.constantBuffers, psStage.constantBuffers );
         if( !prepareDrawState( drawState ) )
             return;
 
+        assembledPrimitivesScratch.clear();
+        assembledPrimitivesScratch.reserve( estimatePrimitiveCount( iaStage.primitiveTopology, vertexCount ) );
+
         emitNonIndexedPrimitives(
             drawState.vertexData, drawState.stride, startVertexLocation, vertexCount, drawState.inputLayout.get(),
             drawState.shaderContext, drawState.vertexShader, iaStage.primitiveTopology,
-            [&]( const AssembledPrimitive &primitive ) { rasterizePrimitive( primitive, drawState.shaderContext ); } );
+            [&]( const AssembledPrimitive &primitive ) { assembledPrimitivesScratch.push_back( primitive ); } );
+
+        drawLinear( assembledPrimitivesScratch, drawState.shaderContext );
     }
 
     void Device::drawIndexed( size_t indexCount, size_t startIndexLocation, size_t baseVertexLocation )
@@ -144,6 +180,9 @@ namespace swr
         DrawState drawState( vsStage.constantBuffers, psStage.constantBuffers );
         if( !prepareDrawState( drawState ) )
             return;
+
+        assembledPrimitivesScratch.clear();
+        assembledPrimitivesScratch.reserve( estimatePrimitiveCount( iaStage.primitiveTopology, indexCount ) );
 
         auto ib = iaStage.indexBuffer;
         if( !ib )
@@ -167,7 +206,9 @@ namespace swr
             idxBytes, idxFmt, idxElemSize, drawState.vertexData, drawState.stride, startIndexLocation, indexCount,
             baseVertexLocation, drawState.inputLayout.get(), drawState.shaderContext, drawState.vertexShader,
             iaStage.primitiveTopology,
-            [&]( const AssembledPrimitive &primitive ) { rasterizePrimitive( primitive, drawState.shaderContext ); } );
+            [&]( const AssembledPrimitive &primitive ) { assembledPrimitivesScratch.push_back( primitive ); } );
+
+        drawLinear( assembledPrimitivesScratch, drawState.shaderContext );
     }
 
     void Device::rasterizePrimitive( const AssembledPrimitive &primitive, const ShaderContext &ctx )

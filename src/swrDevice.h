@@ -370,6 +370,7 @@ namespace swr
 
         bool prepareDrawState( DrawState &drawState ) const;
         void shadeAndWritePixel( size_t fbIndex, float depth, const PSInput &psIn, const ShaderContext &ctx );
+        void drawLinear( const std::vector<AssembledPrimitive> &primitives, const ShaderContext &ctx );
         void rasterizePrimitive( const AssembledPrimitive &primitive, const ShaderContext &ctx );
         void rasterizePoint( const VSOutput &vertex, const ShaderContext &ctx );
         void rasterizeLine( const VSOutput &v0, const VSOutput &v1, const ShaderContext &ctx );
@@ -407,6 +408,7 @@ namespace swr
         };
 
         InternalFrameBuffers frameBuffers;
+        std::vector<AssembledPrimitive> assembledPrimitivesScratch;
         PresentCallback presentCallback;
         size_t frameWidth;
         size_t frameHeight;
