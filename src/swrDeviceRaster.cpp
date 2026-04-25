@@ -38,15 +38,6 @@ namespace
         return glm::vec2( sx, sy );
     }
 
-    static inline bool clipBoundsToViewport( RasterBounds &bounds, const swr::Viewport &vp )
-    {
-        bounds.minX = std::max( bounds.minX, vp.x );
-        bounds.minY = std::max( bounds.minY, vp.y );
-        bounds.maxX = std::min( bounds.maxX, vp.x + vp.width - 1 );
-        bounds.maxY = std::min( bounds.maxY, vp.y + vp.height - 1 );
-        return bounds.minX <= bounds.maxX && bounds.minY <= bounds.maxY;
-    }
-
     static inline size_t frameBufferIndex( int x, int y, size_t frameWidth )
     {
         return static_cast<size_t>( y ) * frameWidth + static_cast<size_t>( x );
@@ -62,19 +53,20 @@ namespace
 namespace swr
 {
 
-    void Device::rasterizePoint( const VSOutput &vertex, const ShaderContext &ctx )
+    void Device::rasterizePoint( const VSOutput &vertex, const ShaderContext &ctx,
+                                 const DrawDispatchState &dispatchState, const RasterTileClipState *tileClip )
     {
-        Viewport vp = resolveViewport( rsStage.viewport, frameWidth, frameHeight );
+        const Viewport &vp = dispatchState.viewport;
 
         glm::vec3 ndc = perspectiveDivide( vertex );
         glm::vec2 screenPos = ndcToViewport( ndc, vp );
 
         int pixelX = static_cast<int>( glm::floor( screenPos.x ) );
         int pixelY = static_cast<int>( glm::floor( screenPos.y ) );
-        if( pixelX < vp.x || pixelX >= vp.x + vp.width || pixelY < vp.y || pixelY >= vp.y + vp.height )
+        if( !isRasterPixelAllowed( pixelX, pixelY, vp, tileClip ) )
             return;
 
-        size_t fbIndex = frameBufferIndex( pixelX, pixelY, frameWidth );
+        size_t fbIndex = frameBufferIndex( pixelX, pixelY, dispatchState.frameWidth );
         float depth = ndc.z;
         if( depth >= frameBuffers.depthBuffer[fbIndex] )
             return;
@@ -84,12 +76,13 @@ namespace swr
         psIn.barycentric = glm::vec3( 1.0f, 0.0f, 0.0f );
         psIn.depth = depth;
 
-        shadeAndWritePixel( fbIndex, depth, psIn, ctx );
+        shadeAndWritePixel( fbIndex, depth, psIn, ctx, dispatchState );
     }
 
-    void Device::rasterizeLine( const VSOutput &v0, const VSOutput &v1, const ShaderContext &ctx )
+    void Device::rasterizeLine( const VSOutput &v0, const VSOutput &v1, const ShaderContext &ctx,
+                                const DrawDispatchState &dispatchState, const RasterTileClipState *tileClip )
     {
-        Viewport vp = resolveViewport( rsStage.viewport, frameWidth, frameHeight );
+        const Viewport &vp = dispatchState.viewport;
 
         auto p0 = perspectiveDivide( v0 );
         auto p1 = perspectiveDivide( v1 );
@@ -98,11 +91,11 @@ namespace swr
         glm::vec2 s1 = ndcToViewport( p1, vp );
         glm::vec2 segment = s1 - s0;
         float segmentLen2 = glm::dot( segment, segment );
-        float halfWidth = clampLineWidth( rsStage.lineWidth ) * 0.5f;
+        float halfWidth = clampLineWidth( dispatchState.lineWidth ) * 0.5f;
 
         if( segmentLen2 == 0.0f )
         {
-            rasterizePoint( v0, ctx );
+            rasterizePoint( v0, ctx, dispatchState, tileClip );
             return;
         }
 
@@ -110,7 +103,7 @@ namespace swr
                              static_cast<int>( glm::ceil( glm::max( s0.x, s1.x ) + halfWidth ) ),
                              static_cast<int>( glm::floor( glm::min( s0.y, s1.y ) - halfWidth ) ),
                              static_cast<int>( glm::ceil( glm::max( s0.y, s1.y ) + halfWidth ) ) };
-        if( !clipBoundsToViewport( bounds, vp ) )
+        if( !clipRasterBounds( bounds.minX, bounds.maxX, bounds.minY, bounds.maxY, vp, tileClip ) )
             return;
 
         float invW0 = 1.0f / v0.position.w;
@@ -136,7 +129,7 @@ namespace swr
                     continue;
 
                 float depth = ( w0 * p0.z * invW0 + w1 * p1.z * invW1 ) / denom;
-                size_t fbIndex = frameBufferIndex( x, y, frameWidth );
+                size_t fbIndex = frameBufferIndex( x, y, dispatchState.frameWidth );
                 if( depth >= frameBuffers.depthBuffer[fbIndex] )
                     continue;
 
@@ -146,15 +139,16 @@ namespace swr
                 psIn.barycentric = glm::vec3( w0, w1, 0.0f );
                 psIn.depth = depth;
 
-                shadeAndWritePixel( fbIndex, depth, psIn, ctx );
+                shadeAndWritePixel( fbIndex, depth, psIn, ctx, dispatchState );
             }
         }
     }
 
     void Device::rasterizeTriangle( const VSOutput &v0, const VSOutput &v1, const VSOutput &v2,
-                                    const ShaderContext &ctx )
+                                    const ShaderContext &ctx, const DrawDispatchState &dispatchState,
+                                    const RasterTileClipState *tileClip )
     {
-        Viewport vp = resolveViewport( rsStage.viewport, frameWidth, frameHeight );
+        const Viewport &vp = dispatchState.viewport;
 
         auto p0 = perspectiveDivide( v0 );
         auto p1 = perspectiveDivide( v1 );
@@ -168,14 +162,14 @@ namespace swr
                              static_cast<int>( glm::ceil( glm::max( glm::max( s0.x, s1.x ), s2.x ) ) ),
                              static_cast<int>( glm::floor( glm::min( glm::min( s0.y, s1.y ), s2.y ) ) ),
                              static_cast<int>( glm::ceil( glm::max( glm::max( s0.y, s1.y ), s2.y ) ) ) };
-        if( !clipBoundsToViewport( bounds, vp ) )
+        if( !clipRasterBounds( bounds.minX, bounds.maxX, bounds.minY, bounds.maxY, vp, tileClip ) )
             return;
 
         float area = edgeFunction( s0, s1, s2 );
         if( area == 0.0f )
             return;
 
-        if( rsStage.cullBackface )
+        if( dispatchState.cullBackface )
         {
             if( area < 0.0f )
                 return;
@@ -195,9 +189,9 @@ namespace swr
                               ( area < 0.0f && w0 <= 0.0f && w1 <= 0.0f && w2 <= 0.0f );
 
                 bool onEdge = false;
-                if( rsStage.wireframe )
+                if( dispatchState.wireframe )
                 {
-                    const float epsPixels = clampLineWidth( rsStage.lineWidth ) * 0.5f;
+                    const float epsPixels = clampLineWidth( dispatchState.lineWidth ) * 0.5f;
                     float L0 = glm::length( s2 - s1 );
                     float L1 = glm::length( s0 - s2 );
                     float L2 = glm::length( s1 - s0 );
@@ -205,7 +199,7 @@ namespace swr
                              ( std::abs( w2 ) <= L2 * epsPixels );
                 }
 
-                if( inside && ( !rsStage.wireframe || onEdge ) )
+                if( inside && ( !dispatchState.wireframe || onEdge ) )
                 {
                     w0 /= area;
                     w1 /= area;
@@ -220,7 +214,7 @@ namespace swr
 
                     float depth = ( w0 * p0.z + w1 * p1.z + w2 * p2.z ) / denom;
 
-                    size_t fbIndex = frameBufferIndex( x, y, frameWidth );
+                    size_t fbIndex = frameBufferIndex( x, y, dispatchState.frameWidth );
                     if( depth < frameBuffers.depthBuffer[fbIndex] )
                     {
                         PSInput psIn;
@@ -229,7 +223,7 @@ namespace swr
                         psIn.barycentric = glm::vec3( w0, w1, w2 );
                         psIn.depth = depth;
 
-                        shadeAndWritePixel( fbIndex, depth, psIn, ctx );
+                        shadeAndWritePixel( fbIndex, depth, psIn, ctx, dispatchState );
                     }
                 }
             }
