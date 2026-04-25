@@ -11,10 +11,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(SWR_ENABLE_TBB "Enable oneTBB dependency for future parallel tiled rendering" OFF)
 
 
-set( TBB_TEST_ENABLE OFF CACHE BOOL "" FORCE )
-set( TBB_EXAMPLES_ENABLE OFF CACHE BOOL "" FORCE )
-set( TBB_BENCH_ENABLE OFF CACHE BOOL "" FORCE )
 if(SWR_ENABLE_TBB)
+	set(TBB_TEST OFF CACHE BOOL "Disable oneTBB tests in FetchContent builds" FORCE)
+	set(TBB_EXAMPLES OFF CACHE BOOL "Disable oneTBB examples in FetchContent builds" FORCE)
+	set(TBB_BENCH OFF CACHE BOOL "Disable oneTBB benchmarks in FetchContent builds" FORCE)
+	set(BUILD_TESTING OFF CACHE BOOL "Disable external project tests in FetchContent builds" FORCE)
 	FetchContent_Declare(
 		oneTBB
 		GIT_REPOSITORY https://github.com/uxlfoundation/oneTBB.git
