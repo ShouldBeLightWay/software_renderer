@@ -2,6 +2,7 @@
 #include <cassert>
 #include <cstdint>
 #include <iostream>
+#include <string>
 
 #include "IScene.h"
 #include "PrimitiveTopologyScene.h"
@@ -13,6 +14,22 @@ namespace
 {
     constexpr int kDefaultWindowWidth = 800;
     constexpr int kDefaultWindowHeight = 600;
+    constexpr int kDefaultTileSize = 16;
+
+    struct DebugOverlayState
+    {
+        bool tileRasterEnabled = false;
+        int tileWidth = kDefaultTileSize;
+        int tileHeight = kDefaultTileSize;
+        int viewportWidth = 0;
+        int viewportHeight = 0;
+        int tilesX = 0;
+        int tilesY = 0;
+        size_t primitiveCount = 0;
+        float frameTimeMs = 0.0f;
+        float fps = 0.0f;
+        std::string sceneName;
+    };
 
     struct TextureLock
     {
@@ -112,13 +129,42 @@ namespace
         SDL_RenderClear( renderer );
         SDL_FRect dst{ 0.0f, 0.0f, static_cast<float>( width ), static_cast<float>( height ) };
         SDL_RenderTexture( renderer, texture, nullptr, &dst );
-        SDL_RenderPresent( renderer );
     }
 
-    swr::Device::PresentCallback makePresentCallback( SDL_Renderer *renderer, SDL_Texture *&texture )
+    void renderDebugOverlay( SDL_Renderer *renderer, const DebugOverlayState &overlayState )
     {
-        return [renderer, &texture]( const std::vector<glm::vec4> &colorBuffer, size_t width, size_t height ) {
+        std::string line1 = "FPS: " + std::to_string( static_cast<int>( overlayState.fps + 0.5f ) ) +
+                            "  Frame: " + std::to_string( overlayState.frameTimeMs ) + " ms";
+        std::string line2 = std::string( "Tile raster: " ) + ( overlayState.tileRasterEnabled ? "ON" : "OFF" ) +
+                            "  Tile size: " + std::to_string( overlayState.tileWidth ) + "x" +
+                            std::to_string( overlayState.tileHeight );
+        std::string line3 = "Scene: " + overlayState.sceneName +
+                            "  Viewport: " + std::to_string( overlayState.viewportWidth ) + "x" +
+                            std::to_string( overlayState.viewportHeight );
+        std::string line4 = "Primitives: " + std::to_string( overlayState.primitiveCount ) +
+                            "  Tiles: " + std::to_string( overlayState.tilesX ) + "x" +
+                            std::to_string( overlayState.tilesY );
+
+        SDL_SetRenderDrawBlendMode( renderer, SDL_BLENDMODE_BLEND );
+        SDL_SetRenderDrawColor( renderer, 0, 0, 0, 180 );
+        SDL_FRect backdrop{ 8.0f, 8.0f, 430.0f, 74.0f };
+        SDL_RenderFillRect( renderer, &backdrop );
+
+        SDL_SetRenderDrawColor( renderer, 255, 255, 255, 255 );
+        SDL_RenderDebugText( renderer, 14.0f, 14.0f, line1.c_str() );
+        SDL_RenderDebugText( renderer, 14.0f, 30.0f, line2.c_str() );
+        SDL_RenderDebugText( renderer, 14.0f, 46.0f, line3.c_str() );
+        SDL_RenderDebugText( renderer, 14.0f, 62.0f, line4.c_str() );
+    }
+
+    swr::Device::PresentCallback makePresentCallback( SDL_Renderer *renderer, SDL_Texture *&texture,
+                                                      const DebugOverlayState &overlayState )
+    {
+        return [renderer, &texture, &overlayState]( const std::vector<glm::vec4> &colorBuffer, size_t width,
+                                                    size_t height ) {
             presentColorBuffer( renderer, texture, colorBuffer, width, height );
+            renderDebugOverlay( renderer, overlayState );
+            SDL_RenderPresent( renderer );
         };
     }
 
@@ -180,8 +226,14 @@ namespace
         }
     }
 
+    void printTileRasterState( const std::shared_ptr<swr::Device> &device, int tileWidth, int tileHeight )
+    {
+        std::cout << "Tile raster: " << ( device->isTileRasterEnabled() ? "ON" : "OFF" ) << ", tile size: " << tileWidth
+                  << "x" << tileHeight << std::endl;
+    }
+
     void handleKeyboardEvent( SceneManager &sceneManager, const std::shared_ptr<swr::Device> &device,
-                              SDL_KeyboardEvent &keyboardEvent )
+                              SDL_KeyboardEvent &keyboardEvent, DebugOverlayState &overlayState )
     {
         if( keyboardEvent.key == SDLK_RIGHT )
         {
@@ -194,6 +246,32 @@ namespace
         {
             if( sceneManager.switchPrev( device ) )
                 reinitializeCurrentScene( sceneManager, device );
+            return;
+        }
+
+        if( keyboardEvent.key == SDLK_T )
+        {
+            device->setTileRasterEnabled( !device->isTileRasterEnabled() );
+            overlayState.tileRasterEnabled = device->isTileRasterEnabled();
+            printTileRasterState( device, overlayState.tileWidth, overlayState.tileHeight );
+            return;
+        }
+
+        if( keyboardEvent.key == SDLK_MINUS )
+        {
+            overlayState.tileWidth = std::max( 1, overlayState.tileWidth / 2 );
+            overlayState.tileHeight = std::max( 1, overlayState.tileHeight / 2 );
+            device->setTileSize( overlayState.tileWidth, overlayState.tileHeight );
+            printTileRasterState( device, overlayState.tileWidth, overlayState.tileHeight );
+            return;
+        }
+
+        if( keyboardEvent.key == SDLK_EQUALS || keyboardEvent.key == SDLK_PLUS )
+        {
+            overlayState.tileWidth *= 2;
+            overlayState.tileHeight *= 2;
+            device->setTileSize( overlayState.tileWidth, overlayState.tileHeight );
+            printTileRasterState( device, overlayState.tileWidth, overlayState.tileHeight );
             return;
         }
 
@@ -213,6 +291,22 @@ namespace
         }
 
         device->present();
+    }
+
+    void updateDebugOverlayState( DebugOverlayState &overlayState, const std::shared_ptr<swr::Device> &device,
+                                  const SceneManager &sceneManager )
+    {
+        overlayState.tileRasterEnabled = device->isTileRasterEnabled();
+        overlayState.sceneName = sceneManager.getCurrentSceneName();
+        overlayState.primitiveCount = device->lastFramePrimitiveCount();
+
+        swr::Viewport viewport = device->activeViewport();
+        overlayState.viewportWidth = viewport.width;
+        overlayState.viewportHeight = viewport.height;
+        overlayState.tilesX =
+            viewport.width > 0 ? ( viewport.width + overlayState.tileWidth - 1 ) / overlayState.tileWidth : 0;
+        overlayState.tilesY =
+            viewport.height > 0 ? ( viewport.height + overlayState.tileHeight - 1 ) / overlayState.tileHeight : 0;
     }
 } // unnamed namespace
 
@@ -260,7 +354,11 @@ int main( int argc, char *argv[] )
         return 1;
     }
 
-    std::shared_ptr<swr::Device> device = swr::Device::create( outW, outH, makePresentCallback( renderer, texture ) );
+    DebugOverlayState overlayState;
+    std::shared_ptr<swr::Device> device =
+        swr::Device::create( outW, outH, makePresentCallback( renderer, texture, overlayState ) );
+    device->setTileSize( overlayState.tileWidth, overlayState.tileHeight );
+    overlayState.tileRasterEnabled = device->isTileRasterEnabled();
 
     SceneManager sceneManager;
     if( !initializeSceneManager( sceneManager, device ) )
@@ -272,6 +370,8 @@ int main( int argc, char *argv[] )
 
     bool running = true;
     SDL_Event event;
+
+    std::cout << "Global controls: T toggle tiled renderer, - halve tile size, + double tile size" << std::endl;
 
     Uint64 perfFreq = SDL_GetPerformanceFrequency();
     Uint64 lastCounter = SDL_GetPerformanceCounter();
@@ -287,6 +387,10 @@ int main( int argc, char *argv[] )
         if( dtSec > 0.1 )
             dtSec = 0.1;
 
+        overlayState.frameTimeMs = static_cast<float>( dtSec * 1000.0 );
+        overlayState.fps = dtSec > 0.0 ? static_cast<float>( 1.0 / dtSec ) : 0.0f;
+        updateDebugOverlayState( overlayState, device, sceneManager );
+
         while( SDL_PollEvent( &event ) )
         {
             if( event.type == SDL_EVENT_QUIT )
@@ -300,7 +404,7 @@ int main( int argc, char *argv[] )
             else if( event.type == SDL_EVENT_KEY_DOWN )
             {
                 SDL_KeyboardEvent &keyboardEvent = event.key;
-                handleKeyboardEvent( sceneManager, device, keyboardEvent );
+                handleKeyboardEvent( sceneManager, device, keyboardEvent, overlayState );
             }
             else if( event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP )
             {
