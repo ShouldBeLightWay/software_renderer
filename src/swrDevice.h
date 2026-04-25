@@ -339,6 +339,11 @@ namespace swr
         {
             return frameHeight;
         }
+        Viewport activeViewport() const;
+        size_t lastFramePrimitiveCount() const
+        {
+            return lastSubmittedPrimitiveCount;
+        }
 
         // Resize internal frame buffers (in pixels)
         void resize( size_t width, size_t height );
@@ -355,6 +360,15 @@ namespace swr
         void setTileSize( int width, int height );
 
       private:
+        struct RasterTileClipState
+        {
+            bool enabled = false;
+            int minX = 0;
+            int maxX = -1;
+            int minY = 0;
+            int maxY = -1;
+        };
+
         struct DrawState
         {
             DrawState( const std::vector<std::shared_ptr<Buffer>> &vsBuffers,
@@ -371,6 +385,20 @@ namespace swr
             VertexShader vertexShader;
         };
 
+        struct DrawDispatchState
+        {
+            Viewport viewport{};
+            PixelShader pixelShader;
+            size_t frameWidth = 0;
+            size_t frameHeight = 0;
+            float lineWidth = 1.0f;
+            bool cullBackface = false;
+            bool wireframe = false;
+            bool tileRasterEnabled = false;
+            int tileWidth = 16;
+            int tileHeight = 16;
+        };
+
         struct TileRasterState
         {
             bool enabled = false;
@@ -378,14 +406,27 @@ namespace swr
             int height = 16;
         };
 
-        bool prepareDrawState( DrawState &drawState ) const;
-        void shadeAndWritePixel( size_t fbIndex, float depth, const PSInput &psIn, const ShaderContext &ctx );
-        void drawLinear( const std::vector<AssembledPrimitive> &primitives, const ShaderContext &ctx );
-        void drawTiled( const std::vector<AssembledPrimitive> &primitives, const ShaderContext &ctx );
-        void rasterizePrimitive( const AssembledPrimitive &primitive, const ShaderContext &ctx );
-        void rasterizePoint( const VSOutput &vertex, const ShaderContext &ctx );
-        void rasterizeLine( const VSOutput &v0, const VSOutput &v1, const ShaderContext &ctx );
-        void rasterizeTriangle( const VSOutput &v0, const VSOutput &v1, const VSOutput &v2, const ShaderContext &ctx );
+        bool prepareDrawState( DrawState &drawState, DrawDispatchState &dispatchState ) const;
+        void shadeAndWritePixel( size_t fbIndex, float depth, const PSInput &psIn, const ShaderContext &ctx,
+                                 const DrawDispatchState &dispatchState );
+        void drawLinear( const std::vector<AssembledPrimitive> &primitives, const ShaderContext &ctx,
+                         const DrawDispatchState &dispatchState );
+        void drawTiled( const std::vector<AssembledPrimitive> &primitives, const ShaderContext &ctx,
+                        const DrawDispatchState &dispatchState );
+        void processTileBin( const std::vector<AssembledPrimitive> &primitives, const ShaderContext &ctx,
+                             const DrawDispatchState &dispatchState, const RasterTileClipState &tileClip,
+                             const std::vector<size_t> &primitiveIndices );
+        bool clipRasterBounds( int &minX, int &maxX, int &minY, int &maxY, const Viewport &vp,
+                               const RasterTileClipState *tileClip ) const;
+        bool isRasterPixelAllowed( int x, int y, const Viewport &vp, const RasterTileClipState *tileClip ) const;
+        void rasterizePrimitive( const AssembledPrimitive &primitive, const ShaderContext &ctx,
+                                 const DrawDispatchState &dispatchState, const RasterTileClipState *tileClip );
+        void rasterizePoint( const VSOutput &vertex, const ShaderContext &ctx, const DrawDispatchState &dispatchState,
+                             const RasterTileClipState *tileClip );
+        void rasterizeLine( const VSOutput &v0, const VSOutput &v1, const ShaderContext &ctx,
+                            const DrawDispatchState &dispatchState, const RasterTileClipState *tileClip );
+        void rasterizeTriangle( const VSOutput &v0, const VSOutput &v1, const VSOutput &v2, const ShaderContext &ctx,
+                                const DrawDispatchState &dispatchState, const RasterTileClipState *tileClip );
         // Приватный конструктор: инициализация внутренних буферов, без shared_from_this()
         Device( size_t width, size_t height, PresentCallback presentCallback )
             : iaStage( std::shared_ptr<Device>() ), vsStage( std::shared_ptr<Device>() ),
@@ -421,6 +462,7 @@ namespace swr
         InternalFrameBuffers frameBuffers;
         std::vector<AssembledPrimitive> assembledPrimitivesScratch;
         TileRasterState tileRaster;
+        size_t lastSubmittedPrimitiveCount = 0;
         PresentCallback presentCallback;
         size_t frameWidth;
         size_t frameHeight;

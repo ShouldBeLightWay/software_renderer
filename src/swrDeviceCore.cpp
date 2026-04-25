@@ -4,6 +4,15 @@
 
 namespace
 {
+    static inline swr::Viewport resolveViewport( const swr::Viewport &configuredViewport, size_t frameWidth,
+                                                 size_t frameHeight )
+    {
+        if( configuredViewport.width > 0 && configuredViewport.height > 0 )
+            return configuredViewport;
+
+        return swr::Viewport{ 0, 0, static_cast<int>( frameWidth ), static_cast<int>( frameHeight ), 0.0f, 1.0f };
+    }
+
     static inline float clampLineWidth( float lineWidth )
     {
         return std::max( 0.5f, lineWidth );
@@ -57,6 +66,11 @@ namespace swr
     std::shared_ptr<InputLayout> Device::createInputLayout( const InputLayoutDesc &desc )
     {
         return std::make_shared<InputLayout>( desc );
+    }
+
+    Viewport Device::activeViewport() const
+    {
+        return resolveViewport( rsStage.viewport, frameWidth, frameHeight );
     }
 
     float VertexInputView::readFloat1( Semantic semantic, size_t index ) const
@@ -133,7 +147,7 @@ namespace swr
         tileRaster.height = std::max( 1, height );
     }
 
-    bool Device::prepareDrawState( DrawState &drawState ) const
+    bool Device::prepareDrawState( DrawState &drawState, DrawDispatchState &dispatchState ) const
     {
         drawState.vertexBuffer = iaStage.vertexBuffer;
         if( !drawState.vertexBuffer )
@@ -155,17 +169,68 @@ namespace swr
             return false;
         }
 
+        if( !psStage.pixelShader )
+        {
+            assert( false && "No pixel shader set" );
+            return false;
+        }
+
         drawState.vertexData = static_cast<const uint8_t *>( drawState.vertexBuffer->data() );
         drawState.stride = drawState.inputLayout->stride();
         drawState.vertexShader = vsStage.vertexShader;
+
+        dispatchState.viewport = resolveViewport( rsStage.viewport, frameWidth, frameHeight );
+        dispatchState.pixelShader = psStage.pixelShader;
+        dispatchState.frameWidth = frameWidth;
+        dispatchState.frameHeight = frameHeight;
+        dispatchState.lineWidth = rsStage.lineWidth;
+        dispatchState.cullBackface = rsStage.cullBackface;
+        dispatchState.wireframe = rsStage.wireframe;
+        dispatchState.tileRasterEnabled = tileRaster.enabled;
+        dispatchState.tileWidth = std::max( 1, tileRaster.width );
+        dispatchState.tileHeight = std::max( 1, tileRaster.height );
         return true;
     }
 
-    void Device::shadeAndWritePixel( size_t fbIndex, float depth, const PSInput &psIn, const ShaderContext &ctx )
+    void Device::shadeAndWritePixel( size_t fbIndex, float depth, const PSInput &psIn, const ShaderContext &ctx,
+                                     const DrawDispatchState &dispatchState )
     {
-        glm::vec4 outColor = psStage.pixelShader( psIn, ctx );
+        glm::vec4 outColor = dispatchState.pixelShader( psIn, ctx );
         frameBuffers.colorBuffer[fbIndex] = outColor;
         frameBuffers.depthBuffer[fbIndex] = depth;
+    }
+
+    bool Device::clipRasterBounds( int &minX, int &maxX, int &minY, int &maxY, const Viewport &vp,
+                                   const RasterTileClipState *tileClip ) const
+    {
+        minX = std::max( minX, vp.x );
+        minY = std::max( minY, vp.y );
+        maxX = std::min( maxX, vp.x + vp.width - 1 );
+        maxY = std::min( maxY, vp.y + vp.height - 1 );
+
+        if( tileClip && tileClip->enabled )
+        {
+            minX = std::max( minX, tileClip->minX );
+            minY = std::max( minY, tileClip->minY );
+            maxX = std::min( maxX, tileClip->maxX );
+            maxY = std::min( maxY, tileClip->maxY );
+        }
+
+        return minX <= maxX && minY <= maxY;
+    }
+
+    bool Device::isRasterPixelAllowed( int x, int y, const Viewport &vp, const RasterTileClipState *tileClip ) const
+    {
+        if( x < vp.x || x >= vp.x + vp.width || y < vp.y || y >= vp.y + vp.height )
+            return false;
+
+        if( tileClip && tileClip->enabled )
+        {
+            if( x < tileClip->minX || x > tileClip->maxX || y < tileClip->minY || y > tileClip->maxY )
+                return false;
+        }
+
+        return true;
     }
 
     void Device::IAStage::setVertexBuffer( std::shared_ptr<Buffer> buffer )
