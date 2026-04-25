@@ -1,6 +1,12 @@
 #include "SceneManager.h"
 #include "IScene.h"
 
+const std::string &SceneManager::emptySceneName()
+{
+    static const std::string kEmptySceneName;
+    return kEmptySceneName;
+}
+
 void SceneManager::registerScene( const std::string &name, Factory f )
 {
     auto it = registry.find( name );
@@ -36,6 +42,14 @@ bool SceneManager::setCurrentScene( const std::string &name, std::shared_ptr<swr
 IScene *SceneManager::getCurrent() const
 {
     return current.get();
+}
+
+const std::string &SceneManager::getCurrentSceneName() const
+{
+    if( currentIndex < 0 || currentIndex >= static_cast<int>( order.size() ) )
+        return emptySceneName();
+
+    return order[static_cast<size_t>( currentIndex )];
 }
 
 bool SceneManager::switchNext( std::shared_ptr<swr::Device> dev )

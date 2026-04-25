@@ -16,12 +16,14 @@ class SceneManager
     void registerScene( const std::string &name, Factory f );
     bool setCurrentScene( const std::string &name, std::shared_ptr<swr::Device> dev );
     IScene *getCurrent() const;
+    const std::string &getCurrentSceneName() const;
 
     // Switch to next/previous scene in registration order
     bool switchNext( std::shared_ptr<swr::Device> dev );
     bool switchPrev( std::shared_ptr<swr::Device> dev );
 
   private:
+    static const std::string &emptySceneName();
     std::unordered_map<std::string, Factory> registry;
     std::vector<std::string> order;
     std::unique_ptr<IScene> current;
