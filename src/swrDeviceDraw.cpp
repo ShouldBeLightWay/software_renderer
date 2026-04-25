@@ -152,21 +152,18 @@ namespace
 namespace swr
 {
 
-    void Device::drawLinear( const std::vector<AssembledPrimitive> &primitives, const ShaderContext &ctx )
+    void Device::drawLinear( const std::vector<AssembledPrimitive> &primitives, const ShaderContext &ctx,
+                             const DrawDispatchState &dispatchState )
     {
         for( const AssembledPrimitive &primitive : primitives )
-            rasterizePrimitive( primitive, ctx );
-    }
-
-    void Device::drawTiled( const std::vector<AssembledPrimitive> &primitives, const ShaderContext &ctx )
-    {
-        drawLinear( primitives, ctx );
+            rasterizePrimitive( primitive, ctx, dispatchState, nullptr );
     }
 
     void Device::draw( size_t vertexCount, size_t startVertexLocation )
     {
         DrawState drawState( vsStage.constantBuffers, psStage.constantBuffers );
-        if( !prepareDrawState( drawState ) )
+        DrawDispatchState dispatchState;
+        if( !prepareDrawState( drawState, dispatchState ) )
             return;
 
         assembledPrimitivesScratch.clear();
@@ -177,16 +174,19 @@ namespace swr
             drawState.shaderContext, drawState.vertexShader, iaStage.primitiveTopology,
             [&]( const AssembledPrimitive &primitive ) { assembledPrimitivesScratch.push_back( primitive ); } );
 
-        if( tileRaster.enabled )
-            drawTiled( assembledPrimitivesScratch, drawState.shaderContext );
+        lastSubmittedPrimitiveCount = assembledPrimitivesScratch.size();
+
+        if( dispatchState.tileRasterEnabled )
+            drawTiled( assembledPrimitivesScratch, drawState.shaderContext, dispatchState );
         else
-            drawLinear( assembledPrimitivesScratch, drawState.shaderContext );
+            drawLinear( assembledPrimitivesScratch, drawState.shaderContext, dispatchState );
     }
 
     void Device::drawIndexed( size_t indexCount, size_t startIndexLocation, size_t baseVertexLocation )
     {
         DrawState drawState( vsStage.constantBuffers, psStage.constantBuffers );
-        if( !prepareDrawState( drawState ) )
+        DrawDispatchState dispatchState;
+        if( !prepareDrawState( drawState, dispatchState ) )
             return;
 
         assembledPrimitivesScratch.clear();
@@ -216,26 +216,30 @@ namespace swr
             iaStage.primitiveTopology,
             [&]( const AssembledPrimitive &primitive ) { assembledPrimitivesScratch.push_back( primitive ); } );
 
-        if( tileRaster.enabled )
-            drawTiled( assembledPrimitivesScratch, drawState.shaderContext );
+        lastSubmittedPrimitiveCount = assembledPrimitivesScratch.size();
+
+        if( dispatchState.tileRasterEnabled )
+            drawTiled( assembledPrimitivesScratch, drawState.shaderContext, dispatchState );
         else
-            drawLinear( assembledPrimitivesScratch, drawState.shaderContext );
+            drawLinear( assembledPrimitivesScratch, drawState.shaderContext, dispatchState );
     }
 
-    void Device::rasterizePrimitive( const AssembledPrimitive &primitive, const ShaderContext &ctx )
+    void Device::rasterizePrimitive( const AssembledPrimitive &primitive, const ShaderContext &ctx,
+                                     const DrawDispatchState &dispatchState, const RasterTileClipState *tileClip )
     {
         switch( primitive.kind )
         {
         case PrimitiveKind::Point:
-            rasterizePoint( primitive.vertices[0], ctx );
+            rasterizePoint( primitive.vertices[0], ctx, dispatchState, tileClip );
             break;
 
         case PrimitiveKind::Line:
-            rasterizeLine( primitive.vertices[0], primitive.vertices[1], ctx );
+            rasterizeLine( primitive.vertices[0], primitive.vertices[1], ctx, dispatchState, tileClip );
             break;
 
         case PrimitiveKind::Triangle:
-            rasterizeTriangle( primitive.vertices[0], primitive.vertices[1], primitive.vertices[2], ctx );
+            rasterizeTriangle( primitive.vertices[0], primitive.vertices[1], primitive.vertices[2], ctx, dispatchState,
+                               tileClip );
             break;
 
         default:
