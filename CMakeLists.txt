@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 project(software_renderer CXX)
 
 include(FetchContent)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/SwrOneTbbMinGW.cmake)
 
 # Set C++17 standard
 set(CMAKE_CXX_STANDARD 17)
@@ -22,7 +23,20 @@ if(SWR_ENABLE_TBB)
 		GIT_TAG v2022.1.0
 		GIT_SHALLOW TRUE
 	)
-	FetchContent_MakeAvailable(oneTBB)
+	FetchContent_GetProperties(oneTBB)
+	if(NOT oneTBB_POPULATED)
+		FetchContent_Populate(oneTBB)
+
+		if(MINGW)
+			swr_patch_onetbb_for_mingw("${onetbb_SOURCE_DIR}")
+		endif()
+
+		add_subdirectory(${onetbb_SOURCE_DIR} ${onetbb_BINARY_DIR})
+
+		if(MINGW)
+			swr_fix_onetbb_mingw_targets()
+		endif()
+	endif()
 endif()
 
 # Add subdirectories for 3rd party libraries

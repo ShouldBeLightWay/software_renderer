@@ -63,4 +63,13 @@ if (WIN32)
                 $<TARGET_FILE_DIR:software_renderer>
         )
     endif()
+
+    if (MINGW)
+        get_filename_component(SWR_MINGW_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+        file(GLOB SWR_MINGW_RUNTIME_DLLS "${SWR_MINGW_BIN_DIR}/*.dll")
+
+        if (SWR_MINGW_RUNTIME_DLLS)
+            file(COPY ${SWR_MINGW_RUNTIME_DLLS} DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+        endif()
+    endif()
 endif()
