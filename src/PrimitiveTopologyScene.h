@@ -32,10 +32,12 @@ class PrimitiveTopologyScene : public IScene
 
     void setViewport( int width, int height );
     void applyPreset( size_t presetIndex );
+    bool presetUsesLineWidth( size_t presetIndex ) const;
 
     std::vector<TopologyPreset> presets;
     size_t currentPreset = 0;
     size_t drawVertexCount = 0;
+    float lineWidth = 1.0f;
 
     std::shared_ptr<swr::Buffer> vb;
     std::shared_ptr<swr::InputLayout> inputLayout;

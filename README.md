@@ -9,6 +9,9 @@ This project uses git submodules for third-party libraries:
 - **SDL3** (release-3.2.28): Simple DirectMedia Layer for window creation and event handling
 - **GLM** (1.0.2): OpenGL Mathematics library for vector and matrix operations
 
+Optional dependency:
+- **oneTBB**: pulled via CMake `FetchContent` when `SWR_ENABLE_TBB=ON` for future parallel tiled rendering
+
 ## Prerequisites
 - CMake 3.20 or higher
 - C++17 compatible compiler (GCC, Clang, or MSVC)
@@ -36,6 +39,12 @@ cmake ..
 make -j$(nproc)
 ```
 
+To prepare oneTBB through CMake for the future parallel tiled path:
+```bash
+cmake -S . -B build -DSWR_ENABLE_TBB=ON
+cmake --build build
+```
+
 The executable `software_renderer` will be created in the build directory.
 
 ## Running
@@ -44,6 +53,11 @@ The executable `software_renderer` will be created in the build directory.
 ```
 
 This will open an 800x600 window. Close the window or press the window close button to exit.
+
+Global runtime controls:
+- `T` toggle tiled renderer on/off
+- `-` halve tile size
+- `+` double tile size
 
 ## Project Structure
 ```

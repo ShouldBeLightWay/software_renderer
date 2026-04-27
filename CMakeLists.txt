@@ -1,10 +1,43 @@
 cmake_minimum_required(VERSION 3.20)
 project(software_renderer CXX)
 
+include(FetchContent)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/SwrOneTbbMinGW.cmake)
+
 # Set C++17 standard
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+option(SWR_ENABLE_TBB "Enable oneTBB dependency for future parallel tiled rendering" OFF)
+
+
+if(SWR_ENABLE_TBB)
+	set(TBB_TEST OFF CACHE BOOL "Disable oneTBB tests in FetchContent builds" FORCE)
+	set(TBB_EXAMPLES OFF CACHE BOOL "Disable oneTBB examples in FetchContent builds" FORCE)
+	set(TBB_BENCH OFF CACHE BOOL "Disable oneTBB benchmarks in FetchContent builds" FORCE)
+	set(BUILD_TESTING OFF CACHE BOOL "Disable external project tests in FetchContent builds" FORCE)
+	FetchContent_Declare(
+		oneTBB
+		GIT_REPOSITORY https://github.com/uxlfoundation/oneTBB.git
+		GIT_TAG v2022.1.0
+		GIT_SHALLOW TRUE
+	)
+	FetchContent_GetProperties(oneTBB)
+	if(NOT oneTBB_POPULATED)
+		FetchContent_Populate(oneTBB)
+
+		if(MINGW)
+			swr_patch_onetbb_for_mingw("${onetbb_SOURCE_DIR}")
+		endif()
+
+		add_subdirectory(${onetbb_SOURCE_DIR} ${onetbb_BINARY_DIR})
+
+		if(MINGW)
+			swr_fix_onetbb_mingw_targets()
+		endif()
+	endif()
+endif()
 
 # Add subdirectories for 3rd party libraries
 # Configure SDL3 options before adding subdirectory

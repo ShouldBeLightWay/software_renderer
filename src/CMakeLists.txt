@@ -13,7 +13,10 @@ set(SWR_HEADERS
 set(SWR_SOURCES
     ${CMAKE_CURRENT_LIST_DIR}/main.cpp
     ${CMAKE_CURRENT_LIST_DIR}/PrimitiveTopologyScene.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/swrDevice.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/swrDeviceCore.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/swrDeviceDraw.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/swrDeviceTiled.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/swrDeviceRaster.cpp
     ${CMAKE_CURRENT_LIST_DIR}/SceneManager.cpp
     ${CMAKE_CURRENT_LIST_DIR}/TriangleScene.cpp
 )
@@ -22,6 +25,10 @@ set(SWR_LIBS
     SDL3::SDL3
     glm::glm
 )
+
+if (TARGET TBB::tbb)
+    list(APPEND SWR_LIBS TBB::tbb)
+endif()
 
 set(SWR_SOURCES_AND_HEADERS
     ${SWR_SOURCES}
@@ -37,6 +44,10 @@ endif()
 
 target_link_libraries(software_renderer PRIVATE ${SWR_LIBS})
 
+if (TARGET TBB::tbb)
+    target_compile_definitions(software_renderer PRIVATE SWR_HAS_TBB=1)
+endif()
+
 if (WIN32)
     # Ensure SDL3 runtime DLL is copied next to the executable
     add_custom_command(TARGET software_renderer POST_BUILD
@@ -44,4 +55,21 @@ if (WIN32)
             $<TARGET_FILE:SDL3::SDL3>
             $<TARGET_FILE_DIR:software_renderer>
     )
+
+    if (TARGET TBB::tbb)
+        add_custom_command(TARGET software_renderer POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:TBB::tbb>
+                $<TARGET_FILE_DIR:software_renderer>
+        )
+    endif()
+
+    if (MINGW)
+        get_filename_component(SWR_MINGW_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+        file(GLOB SWR_MINGW_RUNTIME_DLLS "${SWR_MINGW_BIN_DIR}/*.dll")
+
+        if (SWR_MINGW_RUNTIME_DLLS)
+            file(COPY ${SWR_MINGW_RUNTIME_DLLS} DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+        endif()
+    endif()
 endif()

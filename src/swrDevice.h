@@ -4,16 +4,12 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <type_traits>
 
 #include <array>
 #include <vector>
 
 #include <glm/glm.hpp>
-
-// SDL3 forward decl что бы не тащить SDL3 сюда
-struct SDL_Window;
-struct SDL_Renderer;
-struct SDL_Texture;
 
 #include "swrBuffer.h"
 
@@ -166,6 +162,12 @@ namespace swr
         std::array<VSOutput, 3> vertices{};
     };
 
+    static_assert( std::is_trivially_destructible_v<glm::vec3> );
+    static_assert( std::is_trivially_destructible_v<glm::vec4> );
+    static_assert( std::is_trivially_destructible_v<VSOutput> );
+    static_assert( std::is_trivially_destructible_v<AssembledPrimitive> );
+    static_assert( std::is_trivially_copyable_v<AssembledPrimitive> );
+
     // Перечисление топологий примитивов
     enum class PrimitiveTopology
     {
@@ -203,8 +205,10 @@ namespace swr
     class Device : public std::enable_shared_from_this<Device>
     {
       public:
+        using PresentCallback = std::function<void( const std::vector<glm::vec4> &, size_t, size_t )>;
+
         // Создание устройства только через фабрику
-        static std::shared_ptr<Device> create( size_t width, size_t height );
+        static std::shared_ptr<Device> create( size_t width, size_t height, PresentCallback presentCallback );
 
         ~Device();
         Device( const Device & ) = delete;
@@ -255,6 +259,7 @@ namespace swr
             // В будущем можно добавить настройки растеризации
             void setViewport( const Viewport &viewport );
             void setCullBackface( bool cull );
+            void setLineWidth( float lw );
             void setWireframe( bool wireframe );
 
           private:
@@ -265,6 +270,7 @@ namespace swr
             std::weak_ptr<Device> parentDevice;
             Viewport viewport;
             bool cullBackface = false;
+            float lineWidth = 1.0f;
             bool wireframe = false;
         };
 
@@ -340,28 +346,100 @@ namespace swr
         {
             return frameHeight;
         }
+        Viewport activeViewport() const;
+        size_t lastFramePrimitiveCount() const
+        {
+            return lastSubmittedPrimitiveCount;
+        }
 
         // Resize internal frame buffers (in pixels)
         void resize( size_t width, size_t height );
 
         // Презентация отрендеренного кадра
-        void present( SDL_Renderer *renderer, SDL_Texture *texture );
+        void present();
 
         // Управление рендерингом кадра
         void clear();
         void draw( size_t vertexCount, size_t startVertexLocation );
         void drawIndexed( size_t indexCount, size_t startIndexLocation, size_t baseVertexLocation );
+        void setTileRasterEnabled( bool enabled );
+        bool isTileRasterEnabled() const;
+        void setTileSize( int width, int height );
 
       private:
-        void rasterizePrimitive( const AssembledPrimitive &primitive, const ShaderContext &ctx );
-        void rasterizePoint( const VSOutput &vertex, const ShaderContext &ctx );
-        void rasterizeLine( const VSOutput &v0, const VSOutput &v1, const ShaderContext &ctx );
-        void rasterizeTriangle( const VSOutput &v0, const VSOutput &v1, const VSOutput &v2, const ShaderContext &ctx );
+        struct RasterTileClipState
+        {
+            bool enabled = false;
+            int minX = 0;
+            int maxX = -1;
+            int minY = 0;
+            int maxY = -1;
+        };
+
+        struct DrawState
+        {
+            DrawState( const std::vector<std::shared_ptr<Buffer>> &vsBuffers,
+                       const std::vector<std::shared_ptr<Buffer>> &psBuffers )
+                : shaderContext( vsBuffers, psBuffers )
+            {
+            }
+
+            std::shared_ptr<Buffer> vertexBuffer;
+            std::shared_ptr<InputLayout> inputLayout;
+            const uint8_t *vertexData = nullptr;
+            size_t stride = 0;
+            ShaderContext shaderContext;
+            VertexShader vertexShader;
+        };
+
+        struct DrawDispatchState
+        {
+            Viewport viewport{};
+            PixelShader pixelShader;
+            size_t frameWidth = 0;
+            size_t frameHeight = 0;
+            float lineWidth = 1.0f;
+            bool cullBackface = false;
+            bool wireframe = false;
+            bool tileRasterEnabled = false;
+            int tileWidth = 16;
+            int tileHeight = 16;
+        };
+
+        struct TileRasterState
+        {
+            bool enabled = false;
+            int width = 16;
+            int height = 16;
+        };
+
+        bool prepareDrawState( DrawState &drawState, DrawDispatchState &dispatchState ) const;
+        void shadeAndWritePixel( size_t fbIndex, float depth, const PSInput &psIn, const ShaderContext &ctx,
+                                 const DrawDispatchState &dispatchState );
+        void drawLinear( const std::vector<AssembledPrimitive> &primitives, const ShaderContext &ctx,
+                         const DrawDispatchState &dispatchState );
+        void drawTiled( const std::vector<AssembledPrimitive> &primitives, const ShaderContext &ctx,
+                        const DrawDispatchState &dispatchState );
+        void processTileBin( const std::vector<AssembledPrimitive> &primitives, const ShaderContext &ctx,
+                             const DrawDispatchState &dispatchState, const RasterTileClipState &tileClip,
+                             const std::vector<size_t> &primitiveIndices );
+        bool clipRasterBounds( int &minX, int &maxX, int &minY, int &maxY, const Viewport &vp,
+                               const RasterTileClipState *tileClip ) const;
+        bool isRasterPixelAllowed( int x, int y, const Viewport &vp, const RasterTileClipState *tileClip ) const;
+        void rasterizePrimitive( const AssembledPrimitive &primitive, const ShaderContext &ctx,
+                                 const DrawDispatchState &dispatchState, const RasterTileClipState *tileClip );
+        void rasterizePoint( const VSOutput &vertex, const ShaderContext &ctx, const DrawDispatchState &dispatchState,
+                             const RasterTileClipState *tileClip );
+        void rasterizeLine( const VSOutput &v0, const VSOutput &v1, const ShaderContext &ctx,
+                            const DrawDispatchState &dispatchState, const RasterTileClipState *tileClip );
+        void rasterizeTriangle( const VSOutput &v0, const VSOutput &v1, const VSOutput &v2, const ShaderContext &ctx,
+                                const DrawDispatchState &dispatchState, const RasterTileClipState *tileClip );
         // Приватный конструктор: инициализация внутренних буферов, без shared_from_this()
-        Device( size_t width, size_t height )
+        Device( size_t width, size_t height, PresentCallback presentCallback )
             : iaStage( std::shared_ptr<Device>() ), vsStage( std::shared_ptr<Device>() ),
               rsStage( std::shared_ptr<Device>() ), psStage( std::shared_ptr<Device>() ),
-              omStage( std::shared_ptr<Device>() ), frameWidth( width ), frameHeight( height )
+              omStage( std::shared_ptr<Device>() ), presentCallback( std::move( presentCallback ) ),
+              frameWidth( width ), frameHeight( height )
         {
             frameBuffers.colorBuffer.resize( width * height, glm::vec4( 0.0f ) );
             frameBuffers.depthBuffer.resize( width * height, 1.0f );
@@ -389,6 +467,10 @@ namespace swr
         };
 
         InternalFrameBuffers frameBuffers;
+        std::vector<AssembledPrimitive> assembledPrimitivesScratch;
+        TileRasterState tileRaster;
+        size_t lastSubmittedPrimitiveCount = 0;
+        PresentCallback presentCallback;
         size_t frameWidth;
         size_t frameHeight;
     };

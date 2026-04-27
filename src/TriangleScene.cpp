@@ -28,6 +28,7 @@ void TriangleScene::init()
 {
     // Set clear color to blue with full opacity
     device->OM().setClearColor( glm::vec4( 0.0f, 0.0f, 1.0f, 1.0f ) );
+    device->RS().setLineWidth( lineWidth );
 
     // Setup vertices using local VertexPC structure
     std::vector<VertexPC> vertices = {
@@ -115,6 +116,7 @@ void TriangleScene::prepareFrame( float dt )
     // Apply RS toggles every frame (in case of external changes)
     device->RS().setWireframe( wireframe );
     device->RS().setCullBackface( cullBackface );
+    device->RS().setLineWidth( lineWidth );
     if( viewportEnabled )
     {
         // Процентный вьюпорт: центрированный, занимает 50% размера кадра
@@ -149,7 +151,7 @@ void TriangleScene::endFrame()
 
 void TriangleScene::handleKeyEvent( SDL_KeyboardEvent &ke )
 {
-    // Switch on key presses: W (wireframe), C (cull), V (viewport), O (flip winding)
+    // Switch on key presses: W (wireframe), C (cull), V (viewport), O (flip winding), [/] line width
     if( ke.key == SDLK_W )
     {
         wireframe = !wireframe;
@@ -205,6 +207,18 @@ void TriangleScene::handleKeyEvent( SDL_KeyboardEvent &ke )
         vertices[2] = vbData[1]; // Swap
         vb->uploadData( vertices.data(), vertices.size() );
         std::cout << "Winding flipped (O). With cull ON, triangle will toggle visibility." << std::endl;
+    }
+    else if( ke.key == SDLK_LEFTBRACKET )
+    {
+        lineWidth = std::max( 0.5f, lineWidth - 0.5f );
+        device->RS().setLineWidth( lineWidth );
+        std::cout << "Line width: " << lineWidth << " px" << std::endl;
+    }
+    else if( ke.key == SDLK_RIGHTBRACKET )
+    {
+        lineWidth += 0.5f;
+        device->RS().setLineWidth( lineWidth );
+        std::cout << "Line width: " << lineWidth << " px" << std::endl;
     }
 }
 
