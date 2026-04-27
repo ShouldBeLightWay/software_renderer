@@ -167,7 +167,9 @@ namespace swr
             return;
 
         assembledPrimitivesScratch.clear();
-        assembledPrimitivesScratch.reserve( estimatePrimitiveCount( iaStage.primitiveTopology, vertexCount ) );
+        const size_t estimatedPrimitiveCount = estimatePrimitiveCount( iaStage.primitiveTopology, vertexCount );
+        if( estimatedPrimitiveCount > assembledPrimitivesScratch.capacity() )
+            assembledPrimitivesScratch.reserve( estimatedPrimitiveCount );
 
         emitNonIndexedPrimitives(
             drawState.vertexData, drawState.stride, startVertexLocation, vertexCount, drawState.inputLayout.get(),
@@ -190,7 +192,9 @@ namespace swr
             return;
 
         assembledPrimitivesScratch.clear();
-        assembledPrimitivesScratch.reserve( estimatePrimitiveCount( iaStage.primitiveTopology, indexCount ) );
+        const size_t estimatedPrimitiveCount = estimatePrimitiveCount( iaStage.primitiveTopology, indexCount );
+        if( estimatedPrimitiveCount > assembledPrimitivesScratch.capacity() )
+            assembledPrimitivesScratch.reserve( estimatedPrimitiveCount );
 
         auto ib = iaStage.indexBuffer;
         if( !ib )

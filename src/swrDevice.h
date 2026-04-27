@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <type_traits>
 
 #include <array>
 #include <vector>
@@ -160,6 +161,12 @@ namespace swr
         size_t vertexCount{ 0 };
         std::array<VSOutput, 3> vertices{};
     };
+
+    static_assert( std::is_trivially_destructible_v<glm::vec3> );
+    static_assert( std::is_trivially_destructible_v<glm::vec4> );
+    static_assert( std::is_trivially_destructible_v<VSOutput> );
+    static_assert( std::is_trivially_destructible_v<AssembledPrimitive> );
+    static_assert( std::is_trivially_copyable_v<AssembledPrimitive> );
 
     // Перечисление топологий примитивов
     enum class PrimitiveTopology
