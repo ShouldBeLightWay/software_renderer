@@ -56,3 +56,6 @@ Makefile
 *.swp
 *.swo
 *~
+
+#Qwen code folder
+.qwen
